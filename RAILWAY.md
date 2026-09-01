@@ -1,40 +1,16 @@
 # Railway deployment
 
-Prepared for a single service in Amsterdam. Railway project and empty service created;
-application upload, persistent volume and first deployment remain pending.
+Deploy as one service in Amsterdam with a persistent volume at `/data`.
+Keep `PROCESSING_ENABLED=false`, `ENABLE_EMAIL=false` and `ENABLE_CALENDAR=false`
+throughout setup. The application source is ready, but a successful live deployment
+and integration checks must be verified separately.
 
-## Deployment checkpoint (1 September 2026)
+## Configuration compatibility
 
-- Project: `postbode-mail-automation` (`7c58a839-61f4-4744-9103-eda6baa4d2e9`).
-- Environment: `production` (`7d339aab-ad46-46c2-95a3-ce817f9b860f`).
-- Service: `postbode-mail` (`d1bef9f5-f57c-4a99-ac2a-90d9f458b813`).
-- Dashboard: https://railway.com/project/7c58a839-61f4-4744-9103-eda6baa4d2e9
-- Read-back configuration shows one replica in Amsterdam (`ams`), Dockerfile builder,
-  `Dockerfile.railway`, `/healthz`, and a 120-second health-check timeout.
-- Set `PROCESSING_ENABLED=false`, `ENABLE_EMAIL=false`, `ENABLE_CALENDAR=false`,
-  `DATA_DIR=/data`, `OPENAI_MODEL=gpt-4.1-mini`, and `PYTHONUNBUFFERED=1` with deploys skipped.
-- Requested sleeping disabled, no cron schedule and ON_FAILURE restart with 10 retries;
-  the configuration read-back omits sleeping/restart fields, so verify those before deployment.
-- No secrets, Google authorization or Postbode webhook connection were configured.
-- No volume, source upload, deployment, public domain, backups or uptime monitor exists yet.
-- All 21 offline tests passed. No live integration or cloud health check has run.
-- Official CLI installation could not complete: the execution environment reported
-  `network approval was cancelled before a decision was returned`.
-
-Resume the existing project and service, do not create duplicates. The connected Railway
-controls manage the project but do not upload local source files. Use an authorized CLI
-upload session or connect a private source repository. Attach `/data` in Amsterdam before
-the first build/deploy. Keep all three action switches false throughout setup.
-
-### Current Railway configuration compatibility
-
-Railway rejected setting `railway.json` on this new service because Config as Code is
-deprecated for new services. The equivalent service settings above were applied directly.
-The packaged `railway.json` is retained only as a legacy reference and excluded from CLI
-uploads by `.railwayignore`; do not configure it as this service's configuration file.
-For a Git source, omit that legacy file from the repository. The service already selects
-`Dockerfile.railway`. Optional migration to `.railway/railway.ts` can follow once the CLI
-is available. Current documentation: https://docs.railway.com/infrastructure-as-code
+For new Railway services, set Dockerfile builder and `Dockerfile.railway` directly in
+service settings. Set `/healthz` as the health check with a 120-second timeout.
+Legacy `railway.json` is omitted from this repository.
+See https://docs.railway.com/infrastructure-as-code for current configuration options.
 
 ## Design
 
@@ -55,8 +31,8 @@ The authorization screen is the place to review the access being granted.
 
 ## Initial deployment
 
-1. Reuse the project and single empty service from the checkpoint, then upload this directory
-   using the Railway CLI or a private Git repository. The service settings select
+1. Reuse the existing project and service when resuming setup. Connect the repository
+   or upload this directory using the Railway CLI. The service settings select
    `Dockerfile.railway`; do not opt this new service into legacy `railway.json` configuration.
 2. Select Amsterdam and attach the persistent volume at `/data` before deploying.
 3. The container defaults to `PROCESSING_ENABLED=false`, `ENABLE_EMAIL=false`, and
