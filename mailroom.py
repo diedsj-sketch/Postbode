@@ -143,7 +143,99 @@ def accept(raw, signature):
     return 202, {'id': ident, 'duplicate': not bool(inserted)}
 
 
+def public_page(path):
+    """Static information only; never interpolate runtime data or credentials."""
+    if path == '/':
+        title = 'Postbode Mail'
+        content = '''<p class="label">Personal mail automation</p>
+        <h1>Postbode Mail</h1>
+        <p>A personal tool for organizing scanned physical correspondence.</p>
+        <h2>How it works</h2>
+        <p>When configured and enabled, the service receives signed mail deliveries from
+        Postbode, preserves the original PDF, and uses OpenAI to extract a summary,
+        amounts, dates and actions from the supplied letter text. It archives PDFs
+        in the owner's Google Drive. Email alerts and calendar reminders are optional.</p>
+        <p>Extracted information and draft replies require human review. The service
+        does not pay bills or send replies to a letter's sender.</p>
+        <h2>Personal access</h2>
+        <p>This is a personal-use application, not a public mail service. Google access
+        is granted by the owner through a separate consent flow. This public website
+        provides information only and does not display correspondence or account data.</p>
+        <p><a href="/privacy">Read the privacy policy</a></p>'''
+    elif path == '/privacy':
+        title = 'Privacy policy | Postbode Mail'
+        content = '''<p class="label">Postbode Mail</p><h1>Privacy policy</h1>
+        <p>This policy describes the personal-use Postbode Mail application and its public information pages.</p>
+        <h2>Information used</h2>
+        <p>The service receives scanned PDFs, OCR letter text, delivery identifiers,
+        recipient identifiers and other metadata supplied by Postbode. Letters may
+        contain personal, financial, legal or health information. The service stores
+        delivery records, original files, extracted information and processing status.</p>
+        <h2>Google permissions</h2>
+        <p>With the owner's authorization, the app uses Google Drive to create and
+        manage its mail archive. Gmail access checks the authorized account's email
+        address against the configured owner address and, when enabled, sends alerts
+        to that owner. The authorization requests Gmail metadata access; the current
+        implementation uses it to retrieve the account profile, not to read message bodies.</p>
+        <p>Calendar access is optional and requires a separate authorization including
+        calendar permissions. When enabled, the app creates private deadline events
+        in the selected calendar without inviting other people.</p>
+        <h2>Processing and service providers</h2>
+        <p>When processing is enabled, letter text supplied by Postbode is sent to the
+        OpenAI API for extraction and summaries. The API request sets store=false;
+        this does not itself guarantee zero retention by the provider. Google stores
+        archive files and any enabled alerts or events. Railway hosts the application
+        and its persistent data. Each provider's own terms and privacy policies also apply.</p>
+        <p>The application does not send Gmail message bodies or Google Drive file
+        contents to OpenAI. Its AI input is the OCR text received from Postbode.</p>
+        <h2>Use and disclosure</h2>
+        <p>Data is used to organize the owner's mail and surface information for review.
+        The application does not sell personal data, use it for advertising, or expose
+        it through these public pages. Google user data is used only for the described
+        account checks, archiving, alerts and optional reminders, consistent with the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+        including its Limited Use requirements.</p>
+        <h2>Retention, deletion and revocation</h2>
+        <p>There is no automatic retention limit in this version. The owner can delete
+        archived files, alerts and calendar events in Google and remove local records,
+        original files and any backups through the hosting account. These copies must
+        be managed separately. Revoking authorization stops future authorized access
+        but does not delete previously stored information.</p>
+        <p>Google access can be revoked in
+        <a href="https://myaccount.google.com/connections">Google Account connections</a>.
+        Questions or deletion requests can be directed to the operator using the support
+        email shown on the Google consent screen.</p>
+        <h2>Public website</h2>
+        <p>These pages contain no analytics scripts, advertising, forms or application
+        cookies. The hosting provider may process ordinary request and infrastructure
+        logs, such as network address, request path and time, to deliver the site.</p>'''
+    else:
+        return None
+    return ('''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>''' + title + '''</title><style>
+    :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f6f8fc;
+    color:#15243b;font:18px/1.65 system-ui,sans-serif}main{max-width:820px;margin:auto;
+    padding:48px 24px 80px}nav{display:flex;gap:24px;border-bottom:1px solid #c9d2df;
+    padding-bottom:20px;margin-bottom:48px}a{color:#124cb1;text-underline-offset:4px}
+    a:focus-visible{outline:3px solid #124cb1;outline-offset:4px}h1{font-size:clamp(2rem,6vw,3rem);
+    line-height:1.15;letter-spacing:-.03em}h2{font-size:1.25rem;margin-top:32px}
+    .label{color:#405571;font-size:1rem}footer{margin-top:48px;border-top:1px solid #c9d2df;
+    padding-top:20px;font-size:1rem}</style></head><body><main>
+    <nav aria-label="Main"><a href="/">Postbode Mail</a><a href="/privacy">Privacy policy</a></nav>
+    ''' + content + '''<footer>Postbode Mail · Personal-use application</footer>
+    </main></body></html>''').encode('utf-8')
+
+
 def application(environ, start_response):
+    if environ.get('REQUEST_METHOD') in ('GET', 'HEAD'):
+        page = public_page(environ.get('PATH_INFO'))
+        if page is not None:
+            start_response('200 OK', [('Content-Type', 'text/html; charset=utf-8'),
+                ('Content-Length', str(len(page))), ('Cache-Control', 'no-store'),
+                ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'no-referrer'),
+                ('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")])
+            return [b'' if environ.get('REQUEST_METHOD') == 'HEAD' else page]
     status, result = 404, {'error': 'Not found'}
     try:
         if environ.get('PATH_INFO') == '/healthz' and environ.get('REQUEST_METHOD') == 'GET':
