@@ -1,0 +1,9 @@
+.env*
+token*.json
+credentials*.json
+data/
+.venv/
+__pycache__/
+.git/
+*.zip
+railway.json

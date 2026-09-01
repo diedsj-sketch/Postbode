@@ -1,0 +1,26 @@
+services:
+  receiver:
+    build: .
+    env_file: ${MAILROOM_ENV_FILE:-../.env.local}
+    environment:
+      DATA_DIR: /data
+      GOOGLE_TOKEN_FILE: /run/secrets/google_token
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["mail-data:/data"]
+    secrets: [google_token]
+    restart: unless-stopped
+  worker:
+    build: .
+    command: ["python", "mailroom.py", "worker"]
+    env_file: ${MAILROOM_ENV_FILE:-../.env.local}
+    environment:
+      DATA_DIR: /data
+      GOOGLE_TOKEN_FILE: /run/secrets/google_token
+    volumes: ["mail-data:/data"]
+    secrets: [google_token]
+    restart: unless-stopped
+volumes:
+  mail-data:
+secrets:
+  google_token:
+    file: ./token.json
