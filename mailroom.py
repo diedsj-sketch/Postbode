@@ -493,8 +493,14 @@ def check_connections(request=request_json, google_factory=Google):
         raise RuntimeError('Configured OpenAI model is unavailable')
     # Construction refreshes the token and verifies the Gmail profile matches ALERT_EMAIL.
     # It does not read messages, upload files, send mail, or create calendar events.
-    google_factory()
-    return {'openai': 'ok', 'google': 'ok'}
+    google = google_factory()
+    status = {'openai': 'ok', 'google': 'ok'}
+    calendar = os.environ.get('GOOGLE_CALENDAR_ID')
+    if calendar:
+        cal = urllib.parse.quote(calendar, safe='')
+        google.call('https://www.googleapis.com/calendar/v3/calendars/' + cal)
+        status['calendar'] = 'ok'
+    return status
 
 
 def synthetic_pdf():
