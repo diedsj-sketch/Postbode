@@ -119,6 +119,20 @@ class Tests(unittest.TestCase):
         a=m.classify({'content':None})
         self.assertTrue(a.review_required)
         self.assertEqual(a.action,'review')
+
+    def test_connection_check_is_read_only(self):
+        calls=[]
+        def request(url, **kwargs):
+            calls.append((url, kwargs))
+            return {'id':'gpt-4.1-mini'}
+        google=[]
+        with patch.dict(os.environ, {'OPENAI_API_KEY':'test-key','OPENAI_MODEL':'gpt-4.1-mini'}):
+            result=m.check_connections(request=request, google_factory=lambda:google.append(True))
+        self.assertEqual(result, {'openai':'ok','google':'ok'})
+        self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0][0], 'https://api.openai.com/v1/models/gpt-4.1-mini')
+        self.assertNotIn('body', calls[0][1])
+        self.assertEqual(google,[True])
     def test_ambiguous_email_not_sent_twice(self):
         self.enqueue();r=self.row()
         g=object.__new__(m.Google)
