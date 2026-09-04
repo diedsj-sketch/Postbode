@@ -133,6 +133,16 @@ class Tests(unittest.TestCase):
         self.assertEqual(calls[0][0], 'https://api.openai.com/v1/models/gpt-4.1-mini')
         self.assertNotIn('body', calls[0][1])
         self.assertEqual(google,[True])
+
+    def test_synthetic_pilot_exercises_pipeline_without_outbound_actions(self):
+        with patch.dict(os.environ, {'PROCESSING_ENABLED': 'false',
+                                    'ENABLE_EMAIL': 'false',
+                                    'ENABLE_CALENDAR': 'false'}):
+            result = m.synthetic_pilot(analysis, FakeGoogle)
+        self.assertTrue(result['verified'])
+        self.assertFalse(result['duplicate'])
+        self.assertEqual(FakeGoogle.archives, 1)
+        self.assertEqual((FakeGoogle.emails, FakeGoogle.calendars), (0, 0))
     def test_ambiguous_email_not_sent_twice(self):
         self.enqueue();r=self.row()
         g=object.__new__(m.Google)
