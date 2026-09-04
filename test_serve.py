@@ -3,11 +3,25 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import serve
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_startup_connection_check_is_opt_in(self):
+        checker = Mock(return_value={'openai': 'ok', 'google': 'ok'})
+        self.assertIsNone(serve.run_startup_connection_check({}, checker))
+        checker.assert_not_called()
+
+    def test_startup_connection_check_runs_once(self):
+        checker = Mock(return_value={'openai': 'ok', 'google': 'ok'})
+        with patch('builtins.print') as output:
+            result = serve.run_startup_connection_check(
+                {'CHECK_CONNECTIONS_ON_START': 'true'}, checker)
+        self.assertEqual(result, {'openai': 'ok', 'google': 'ok'})
+        checker.assert_called_once_with()
+        output.assert_called_once()
+
     def test_setup_does_not_start_worker(self):
         self.assertEqual([n for n,c in serve.commands({})], ['receiver'])
     def test_uses_platform_port(self):
