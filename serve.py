@@ -1,4 +1,5 @@
 """Supervise the receiver and optional worker on one persistent Railway volume."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,19 @@ def run_startup_synthetic_pilot(env, pilot=None):
     print(json.dumps({'synthetic_pilot': result}, sort_keys=True), flush=True)
     if not result.get('verified'):
         raise RuntimeError('Synthetic pilot verification failed')
+    return result
+
+
+def log_webhook_secret_fingerprint(env):
+    """Log an opt-in, non-reversible identifier for secret mismatch diagnosis."""
+    if env.get('LOG_WEBHOOK_SECRET_FINGERPRINT_ON_START') != 'true':
+        return None
+    secret = env.get('POSTBODE_WEBHOOK_SECRET', '')
+    result = {
+        'length': len(secret),
+        'sha256_12': hashlib.sha256(secret.encode()).hexdigest()[:12],
+    }
+    print(json.dumps({'webhook_secret_fingerprint': result}, sort_keys=True), flush=True)
     return result
 
 
@@ -122,6 +136,7 @@ if __name__ == '__main__':
     try:
         specs = commands(os.environ)
         prepare_volume()
+        log_webhook_secret_fingerprint(os.environ)
         run_startup_connection_check(os.environ)
         run_startup_synthetic_pilot(os.environ)
     except Exception:
