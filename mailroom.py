@@ -479,6 +479,24 @@ class Google:
         update(row['id'],email_state='sent',email_id=r['id'])
 
 
+def check_connections(request=request_json, google_factory=Google):
+    """Validate configured API access without creating or modifying user data."""
+    key = os.environ.get('OPENAI_API_KEY')
+    if not key:
+        raise RuntimeError('OpenAI credentials missing')
+    model = os.environ.get('OPENAI_MODEL', 'gpt-4.1-mini')
+    result = request(
+        'https://api.openai.com/v1/models/' + urllib.parse.quote(model, safe=''),
+        headers={'Authorization': 'Bearer ' + key},
+    )
+    if result.get('id') != model:
+        raise RuntimeError('Configured OpenAI model is unavailable')
+    # Construction refreshes the token and verifies the Gmail profile matches ALERT_EMAIL.
+    # It does not read messages, upload files, send mail, or create calendar events.
+    google_factory()
+    return {'openai': 'ok', 'google': 'ok'}
+
+
 def process(row, analyzer=classify, google_factory=Google):
     p = json.loads(row['payload'])
     ident = row['id']
@@ -552,7 +570,8 @@ def export_register(path):
 def main():
     os.umask(0o077)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=['worker','once','status','export','retry','reconcile-email'])
+    parser.add_argument('command',choices=['worker','once','status','export','retry','reconcile-email',
+                                           'check-connections'])
     parser.add_argument('--output',default='mail-register.csv')
     parser.add_argument('--id')
     group=parser.add_mutually_exclusive_group()
@@ -580,6 +599,8 @@ def main():
             parser.error('--id and either --email-id or --confirmed-not-sent required')
         update(args.id,email_state='sent' if args.email_id else None,email_id=args.email_id,
                state='pending',attempts=0,next_attempt=0,error=None)
+    elif args.command=='check-connections':
+        print(json.dumps(check_connections()))
 
 
 if __name__=='__main__':
