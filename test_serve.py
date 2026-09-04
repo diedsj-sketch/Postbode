@@ -40,6 +40,17 @@ class DeploymentTests(unittest.TestCase):
         checker.assert_called_once_with()
         output.assert_called_once()
 
+    def test_startup_connection_check_logs_only_safe_failure_metadata(self):
+        secret = 'never-log-this-secret'
+        error = RuntimeError(secret)
+        with patch('builtins.print') as output:
+            with self.assertRaises(RuntimeError):
+                serve.run_startup_connection_check(
+                    {'CHECK_CONNECTIONS_ON_START': 'true'}, Mock(side_effect=error))
+        rendered = str(output.call_args)
+        self.assertIn('RuntimeError', rendered)
+        self.assertNotIn(secret, rendered)
+
     def test_startup_synthetic_pilot_requires_explicit_opt_in(self):
         pilot = Mock(return_value={'verified': True})
         self.assertIsNone(serve.run_startup_synthetic_pilot({}, pilot))
