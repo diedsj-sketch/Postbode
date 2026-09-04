@@ -8,6 +8,24 @@ import serve
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_webhook_secret_fingerprint_is_opt_in(self):
+        with patch('builtins.print') as output:
+            result = serve.log_webhook_secret_fingerprint(
+                {'POSTBODE_WEBHOOK_SECRET': 'secret-value'})
+        self.assertIsNone(result)
+        output.assert_not_called()
+
+    def test_webhook_secret_fingerprint_hides_secret(self):
+        secret = 'secret-value'
+        with patch('builtins.print') as output:
+            result = serve.log_webhook_secret_fingerprint({
+                'LOG_WEBHOOK_SECRET_FINGERPRINT_ON_START': 'true',
+                'POSTBODE_WEBHOOK_SECRET': secret,
+            })
+        self.assertEqual(result, {'length': 12, 'sha256_12': '31160254d129'})
+        self.assertNotIn(secret, str(output.call_args))
+        output.assert_called_once()
+
     def test_startup_connection_check_is_opt_in(self):
         checker = Mock(return_value={'openai': 'ok', 'google': 'ok'})
         self.assertIsNone(serve.run_startup_connection_check({}, checker))
