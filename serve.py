@@ -21,6 +21,20 @@ def run_startup_connection_check(env, checker=None):
     return result
 
 
+def run_startup_synthetic_pilot(env, pilot=None):
+    """Run exactly one explicitly enabled production pilot before serving."""
+    if env.get('RUN_SYNTHETIC_PILOT_ON_START') != 'true':
+        return None
+    if pilot is None:
+        from mailroom import synthetic_pilot
+        pilot = synthetic_pilot
+    result = pilot()
+    print(json.dumps({'synthetic_pilot': result}, sort_keys=True), flush=True)
+    if not result.get('verified'):
+        raise RuntimeError('Synthetic pilot verification failed')
+    return result
+
+
 def commands(env):
     port = int(env.get('PORT', '8080'))
     if not 1 <= port <= 65535:
@@ -109,6 +123,7 @@ if __name__ == '__main__':
         specs = commands(os.environ)
         prepare_volume()
         run_startup_connection_check(os.environ)
+        run_startup_synthetic_pilot(os.environ)
     except Exception:
         # Do not expose environment contents or secrets in deployment logs.
         print('Startup configuration or persistent-volume check failed', file=sys.stderr)
