@@ -17,7 +17,16 @@ def run_startup_connection_check(env, checker=None):
     if checker is None:
         from mailroom import check_connections
         checker = check_connections
-    result = checker()
+    try:
+        result = checker()
+    except Exception as exc:
+        failure = {'status': 'failed', 'error_type': type(exc).__name__}
+        code = getattr(exc, 'code', None)
+        if isinstance(code, int):
+            failure['http_status'] = code
+        print(json.dumps({'connection_check': failure}, sort_keys=True),
+              file=sys.stderr, flush=True)
+        raise
     print(json.dumps(result, sort_keys=True), flush=True)
     return result
 
