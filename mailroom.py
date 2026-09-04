@@ -497,6 +497,96 @@ def check_connections(request=request_json, google_factory=Google):
     return {'openai': 'ok', 'google': 'ok'}
 
 
+def synthetic_pdf():
+    """Build a small, valid one-page PDF for the controlled production pilot."""
+    lines = [
+        'SYNTHETIC TEST LETTER - NOT A REAL INVOICE',
+        'Sender: Example Test Company',
+        'Reference: SYNTHETIC-PILOT-001',
+        'Please pay EUR 123.45 no later than 18 September 2026.',
+        'This document exists only to verify the Postbode mail automation.',
+    ]
+    commands = ['BT', '/F1 13 Tf', '72 740 Td']
+    for index, line in enumerate(lines):
+        escaped = line.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+        if index:
+            commands.append('0 -24 Td')
+        commands.append(f'({escaped}) Tj')
+    commands.append('ET')
+    stream = ('\n'.join(commands) + '\n').encode('ascii')
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] '
+        b'/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'endstream',
+    ]
+    result = bytearray(b'%PDF-1.4\n%Mailroom synthetic pilot\n')
+    offsets = [0]
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(result))
+        result.extend(f'{number} 0 obj\n'.encode() + obj + b'\nendobj\n')
+    xref = len(result)
+    result.extend(f'xref\n0 {len(objects) + 1}\n'.encode())
+    result.extend(b'0000000000 65535 f \n')
+    for offset in offsets[1:]:
+        result.extend(f'{offset:010d} 00000 n \n'.encode())
+    result.extend(
+        f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n'
+        f'startxref\n{xref}\n%%EOF\n'.encode()
+    )
+    return bytes(result)
+
+
+def synthetic_pilot(analyzer=classify, google_factory=Google):
+    """Run one idempotent live pilot while all continuous/outbound actions stay off."""
+    if any(os.environ.get(name) == 'true' for name in
+           ('PROCESSING_ENABLED', 'ENABLE_EMAIL', 'ENABLE_CALENDAR')):
+        raise RuntimeError('Synthetic pilot requires all processing and outbound flags off')
+    secret = os.environ.get('POSTBODE_WEBHOOK_SECRET', '')
+    recipient = os.environ.get('POSTBODE_RECIPIENT_UUID', '')
+    if not secret or not recipient:
+        raise RuntimeError('Synthetic pilot configuration missing')
+    pdf = synthetic_pdf()
+    payload = {
+        'uuid': '00000000-0000-4000-8000-000000000001',
+        'reference': 'SYNTHETIC-PILOT-001',
+        'status': {'id': 300, 'name': 'Ontvangen'},
+        'recipient': {'uuid': recipient},
+        'pdf': base64.b64encode(pdf).decode(),
+        'document_sha256': hashlib.sha256(pdf).hexdigest(),
+        'content': ('SYNTHETIC TEST LETTER - NOT A REAL INVOICE\n'
+                    'Sender: Example Test Company\n'
+                    'Reference: SYNTHETIC-PILOT-001\n'
+                    'Please pay EUR 123.45 no later than 18 September 2026.\n'
+                    'This document exists only to verify the Postbode mail automation.'),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
+    signature = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    code, accepted = accept(raw, signature)
+    if code != 202:
+        raise RuntimeError('Synthetic pilot receiver rejected payload')
+    worker_once(analyzer=analyzer, google_factory=google_factory)
+    with db() as c:
+        row = c.execute('SELECT * FROM mail WHERE id=?', (accepted['id'],)).fetchone()
+    extracted = json.loads(row['analysis']) if row and row['analysis'] else {}
+    stored_pdf = root() / 'originals' / accepted['id'] / 'original.pdf'
+    checks = {
+        'state_done': bool(row and row['state'] == 'done'),
+        'amount_123_45': extracted.get('amount', {}).get('value') == '123.45',
+        'currency_eur': extracted.get('currency', {}).get('value') == 'EUR',
+        'deadline_2026_09_18': extracted.get('deadline', {}).get('value') == '2026-09-18',
+        'drive_archived': bool(row and row['drive_id']),
+        'original_pdf_intact': (stored_pdf.exists() and
+                                hashlib.sha256(stored_pdf.read_bytes()).digest() ==
+                                hashlib.sha256(pdf).digest()),
+        'email_not_sent': bool(row and not row['email_state'] and not row['email_id']),
+        'calendar_not_created': bool(row and not row['calendar_id']),
+    }
+    return {'verified': all(checks.values()), 'duplicate': accepted['duplicate'], 'checks': checks}
+
+
 def process(row, analyzer=classify, google_factory=Google):
     p = json.loads(row['payload'])
     ident = row['id']
