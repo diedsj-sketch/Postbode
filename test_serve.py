@@ -22,6 +22,19 @@ class DeploymentTests(unittest.TestCase):
         checker.assert_called_once_with()
         output.assert_called_once()
 
+    def test_startup_synthetic_pilot_requires_explicit_opt_in(self):
+        pilot = Mock(return_value={'verified': True})
+        self.assertIsNone(serve.run_startup_synthetic_pilot({}, pilot))
+        pilot.assert_not_called()
+
+    def test_startup_synthetic_pilot_runs_once(self):
+        pilot = Mock(return_value={'verified': True})
+        with patch('builtins.print'):
+            result = serve.run_startup_synthetic_pilot(
+                {'RUN_SYNTHETIC_PILOT_ON_START': 'true'}, pilot)
+        self.assertEqual(result, {'verified': True})
+        pilot.assert_called_once_with()
+
     def test_setup_does_not_start_worker(self):
         self.assertEqual([n for n,c in serve.commands({})], ['receiver'])
     def test_uses_platform_port(self):
