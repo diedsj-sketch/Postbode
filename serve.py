@@ -1,4 +1,5 @@
 """Supervise the receiver and optional worker on one persistent Railway volume."""
+import json
 import os
 from pathlib import Path
 import signal
@@ -6,6 +7,18 @@ import subprocess
 import sys
 import tempfile
 import time
+
+
+def run_startup_connection_check(env, checker=None):
+    """Run the opt-in, read-only provider check before starting services."""
+    if env.get('CHECK_CONNECTIONS_ON_START') != 'true':
+        return None
+    if checker is None:
+        from mailroom import check_connections
+        checker = check_connections
+    result = checker()
+    print(json.dumps(result, sort_keys=True), flush=True)
+    return result
 
 
 def commands(env):
@@ -95,6 +108,7 @@ if __name__ == '__main__':
     try:
         specs = commands(os.environ)
         prepare_volume()
+        run_startup_connection_check(os.environ)
     except Exception:
         # Do not expose environment contents or secrets in deployment logs.
         print('Startup configuration or persistent-volume check failed', file=sys.stderr)
