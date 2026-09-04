@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import urllib.error
 import mailroom as m
 
@@ -133,6 +133,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(calls[0][0], 'https://api.openai.com/v1/models/gpt-4.1-mini')
         self.assertNotIn('body', calls[0][1])
         self.assertEqual(google,[True])
+
+    def test_connection_check_verifies_selected_calendar_read_only(self):
+        def request(url, **kwargs):
+            return {'id':'gpt-4.1-mini'}
+        google=Mock()
+        with patch.dict(os.environ, {
+                'OPENAI_API_KEY':'test-key',
+                'OPENAI_MODEL':'gpt-4.1-mini',
+                'GOOGLE_CALENDAR_ID':'primary'}, clear=False):
+            result=m.check_connections(request=request, google_factory=lambda:google)
+        self.assertEqual(result, {'openai':'ok','google':'ok','calendar':'ok'})
+        google.call.assert_called_once_with(
+            'https://www.googleapis.com/calendar/v3/calendars/primary')
 
     def test_synthetic_pilot_exercises_pipeline_without_outbound_actions(self):
         with patch.dict(os.environ, {'PROCESSING_ENABLED': 'false',
