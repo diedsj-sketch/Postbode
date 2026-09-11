@@ -114,7 +114,10 @@ def apply_action(form):
     stamp = now()
     action = form.get('action')
     with db() as c:
-        if action in ('plan-baseline', 'plan-reserve'):
+        if action in ('case-paid','case-draft-sent'):
+            from cases import action as case_action
+            case_action(c,form,stamp)
+        elif action in ('plan-baseline', 'plan-reserve'):
             from planning import action as planning_action
             planning_action(c, form, stamp)
         elif action == 'gmail-case':
@@ -211,6 +214,7 @@ def page_data():
         recurring = [dict(row) for row in c.execute('SELECT * FROM finance_recurring ORDER BY direction DESC,name')]
         obligations = [dict(row) for row in c.execute(
             '''SELECT o.*,m.drive_id FROM finance_obligations o LEFT JOIN mail m ON m.id=o.mail_id
+               WHERE o.mail_id IS NULL OR o.mail_id NOT IN (SELECT mail_id FROM finance_case_mail)
                ORDER BY CASE o.status WHEN 'review' THEN 0 WHEN 'confirmed' THEN 1 ELSE 2 END,
                COALESCE(o.due_date,'9999-12-31'),o.created_at DESC''')]
         forecasts = {}
@@ -218,6 +222,11 @@ def page_data():
             values = [a['balance_cents'] for a in accounts if a['ledger_id'] == ledger['id']]
             opening = sum(value for value in values if value is not None)
             forecasts[ledger['id']] = forecast(c, ledger['id'], opening)
+        if c.execute('SELECT 1 FROM finance_plan_baseline').fetchone():
+            from planning import forecast as plan_forecast
+            plan=plan_forecast(c,days=60)
+            forecasts={l['id']:[(r['date'],r['name'],r['amount'],r['balance'])
+                       for r in plan['rows'] if r['ledger']==l['id']] for l in ledgers}
     return ledgers, accounts, recurring, obligations, forecasts
 
 
@@ -239,6 +248,7 @@ def login_page(error=''):
 def dashboard_page(token, notice=''):
     from finance_sync import panel as gmail_panel
     from planning import panel as planning_panel
+    from cases import panel as cases_panel
     ledgers, accounts, recurring, obligations, forecasts = page_data()
     token_field = f'<input type="hidden" name="csrf" value="{csrf(token)}">'
     ledger_options = '<option value="">Needs assignment</option>' + ''.join(
@@ -268,9 +278,9 @@ def dashboard_page(token, notice=''):
     return shell(f'''<header><div><p class="eyebrow">POSTBODE CONTROL</p><h1>Money overview</h1></div>
       <form method="post" action="/dashboard/logout">{token_field}<button class="quiet">Sign out</button></form></header>
       <main>{notice_html}<nav><a href="#overview">Overview</a><a href="#review">Review <b>{len(review)}</b></a>
-      <a href="#planning">Payment planning</a><a href="#obligations">Debts</a><a href="#gmail">Gmail</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
+      <a href="#planning">Payment planning</a><a href="#cases">Cases</a><a href="#obligations">Debts</a><a href="#gmail">Gmail</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
       {planning_panel(token_field)}
-      <section id="overview"><div class="section-title"><div><p class="eyebrow">SEPARATE LEDGERS</p><h2>Available cash and exposure</h2></div><p>Only confirmed obligations affect projections.</p></div>
+      <section id="overview"><div class="section-title"><div><p class="eyebrow">SEPARATE LEDGERS</p><h2>Available cash and exposure</h2></div><p>Forecasts depend on current balances, known dates and recorded arrangements. Missing inputs are flagged below.</p></div>
       <div class="metrics">{''.join(cards)}</div></section>
       <section id="review"><div class="section-title"><div><p class="eyebrow">INCOMING MAIL</p><h2>Needs review</h2></div><p>Approve, correct or dismiss each proposed obligation.</p></div>
       <div class="stack">{review_rows or '<div class="empty">No mail-derived obligations need review.</div>'}</div></section>
@@ -280,6 +290,7 @@ def dashboard_page(token, notice=''):
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Ledger</th><th>Item</th><th>Movement</th><th>Balance</th></tr></thead>
       <tbody>{''.join(forecast_rows) or '<tr><td colspan="5">Add balances, amounts and next dates to generate a forecast.</td></tr>'}</tbody></table></div></section>
       {gmail_panel(token_field, ledger_options)}
+      {cases_panel(token_field)}
       <section id="accounts"><div class="section-title"><div><p class="eyebrow">OPENING POSITION</p><h2>Bank balances</h2></div><p>Update these whenever you reconcile the dashboard.</p></div>
       <div class="grid">{account_forms}</div></section>
       <section id="recurring"><div class="section-title"><div><p class="eyebrow">PLANNED</p><h2>Recurring income and fixed costs</h2></div></div>

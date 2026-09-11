@@ -117,16 +117,26 @@ def forecast(c, start=None, days=90, include_estimates=False):
         for date in dates:
             events.append((date,r['ledger_id'],sign*r['amount_cents'],r['name'],0))
     # Preserve the existing commitments, never substitute a new proposal.
-    for r in c.execute("SELECT * FROM finance_obligations WHERE status='confirmed'"):
+    for r in c.execute("""SELECT * FROM finance_obligations WHERE status='confirmed'
+        AND id NOT IN (SELECT obligation_id FROM finance_gmail_cases WHERE obligation_id IS NOT NULL)
+        AND (mail_id IS NULL OR mail_id NOT IN (SELECT mail_id FROM finance_case_mail))"""):
         if not r['ledger_id'] or r['outstanding_cents'] is None or not r['due_date']:
             issues.append(f"Incomplete existing commitment: {r['creditor']}")
             continue
         date=max(start,dt.date.fromisoformat(r['due_date']))
         if date<=end:
             events.append((date,r['ledger_id'],-r['outstanding_cents'],r['creditor'],0))
-    count=c.execute('SELECT COUNT(*) FROM finance_gmail_cases').fetchone()[0]
-    if count:
-        issues.append(f'{count} Gmail cases and their negotiated instalments are not yet reconciled into this forecast. Do not use it as a payment instruction.')
+    from cases import payments
+    commitments,case_issues=payments(c,start,end)
+    events.extend(commitments)
+    issues.extend(case_issues)
+    status=c.execute('SELECT source_at,error FROM finance_gmail_sync WHERE id=1').fetchone()
+    if not status or not status['source_at']:
+        issues.append('Gmail source has not been imported')
+    elif dt.datetime.fromisoformat(status['source_at']).date()<start-dt.timedelta(days=1):
+        issues.append('Gmail source is stale; refresh before relying on the payment plan')
+    if status and status['error']:
+        issues.append('Latest Gmail import failed; previous arrangements retained')
     reserve=c.execute('SELECT reserve_cents FROM finance_plan_settings WHERE id=1').fetchone()[0]
     minimum=dict(balances)
     rows=[]
@@ -191,5 +201,5 @@ def panel(token):
     <p>Cloudstep lowest projected balance excluding estimated Airbnb: {money(result['minimum'].get('cloudstep'))}.
     Including estimated Airbnb: {money(estimated['minimum'].get('cloudstep'))}.</p>
     <p>Same-day debits are shown before credits until posting times are known. Balances are manually reconciled, not live bank feeds.</p>
-    <details open><summary>Forecast incomplete: missing inputs and existing arrangements</summary><ul>{issues}</ul></details>
+    <details><summary>Forecast incomplete: missing inputs and existing arrangements</summary><ul>{issues}</ul></details>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Ledger</th><th>Item</th><th>Movement</th><th>Balance</th></tr></thead><tbody>{rows}</tbody></table></div></section>'''

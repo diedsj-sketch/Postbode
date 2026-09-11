@@ -804,6 +804,10 @@ def process(row, analyzer=classify, google_factory=Google):
     update(ident,analysis=a.model_dump_json())
     atomic_file(original / 'analysis.json',a.model_dump_json(indent=2).encode())
     propose_financial_obligation(ident, recipient, a)
+    from cases import attach_mail
+    with db() as c:
+        current = c.execute('SELECT * FROM mail WHERE id=?', (ident,)).fetchone()
+        attach_mail(c, current, now())
     google = google_factory()
     drive_id = google.archive(row,a,pdf,recipient) if pdf else None
     link = 'https://drive.google.com/file/d/'+drive_id+'/view' if drive_id else 'PDF unavailable; check Postbode'

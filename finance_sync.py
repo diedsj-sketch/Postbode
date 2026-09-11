@@ -14,6 +14,8 @@ SHEETS = DEBT_SHEETS + ('Personal Repayments', 'Company Repayments',
 
 
 def schema(c):
+    from cases import schema as case_schema
+    case_schema(c)
     c.execute('''CREATE TABLE IF NOT EXISTS finance_gmail_cases (
         id TEXT PRIMARY KEY, sheet TEXT NOT NULL, fields TEXT NOT NULL,
         fingerprint TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -71,6 +73,8 @@ def ingest(c, payload, stamp):
         VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at,
         imported_at=excluded.imported_at,source_at=excluded.source_at,error=NULL,payload=excluded.payload''',
         (stamp,stamp,payload['generated_at'],None,json.dumps(payload,allow_nan=False)))
+    from cases import import_snapshot
+    import_snapshot(c, payload, stamp)
     return count
 
 
@@ -139,25 +143,13 @@ def panel(token_field, ledger_options):
     cards = []
     for row in rows:
         f = json.loads(row['fields'])
-        changed = row['reviewed_fingerprint'] != row['fingerprint']
-        linked = row['obligation_id']
-        options = '<option value="">Choose existing debt</option>'+''.join(
-            f'<option value="{esc(o["id"])}">{esc(o["ledger_id"])}: {esc(o["creditor"])} / {esc(o["description"])}</option>' for o in obligations)
         cards.append(f'''<details class="panel"><summary>{esc(row['sheet'])}: {esc(f.get('Original creditor',''))}
-            / {esc(f.get('Case / contract',row['id']))} {'(needs review)' if changed else '(reviewed)'}</summary>
-            <p>Source case: {esc(row['id'])}. Linked dashboard debt: {esc(linked or 'none')}. Source values are claims, not confirmed totals.</p>
-            {source_fields(f)}
-            <form method="post" action="/dashboard/action">{token_field}
-            <input type="hidden" name="action" value="gmail-case"><input type="hidden" name="id" value="{esc(row['id'])}">
-            <input type="hidden" name="fingerprint" value="{esc(row['fingerprint'])}">
-            <label>Link to the same existing debt (adds no balance)<select name="obligation_id">{options}</select></label>
-            <button name="operation" value="link">Link existing debt</button>
-            <button name="operation" value="acknowledge" class="quiet">Mark source reviewed</button>
-            {'' if linked else f'<label>Ledger for a new candidate<select name="ledger_id">{ledger_options}</select></label><button name="operation" value="create">Create review candidate, amount left blank</button>'}
-            </form></details>''')
+            / {esc(f.get('Case / contract',row['id']))}</summary>
+            <p>Source case: {esc(row['id'])}. Source values are claims, not confirmed totals.</p>
+            {source_fields(f)}</details>''')
     return f'''<section id="gmail"><h2>Gmail debt register</h2><p>{esc(summary)}</p>
-        <p>{len(rows)} cases. Link reminders to an existing debt before creating a new candidate. Source updates never change confirmed amounts or payment status.</p>
-        <div class="stack">{''.join(cards)}</div><h3>Repayments, payments and disputes</h3>{context}</section>'''
+        <p>{len(rows)} source cases imported automatically. See Cases for consolidated records and existing repayment schedules.</p>
+        <details><summary>Original Gmail source records</summary><div class="stack">{''.join(cards)}</div></details><h3>Repayments, payments and disputes</h3>{context}</section>'''
 
 
 def action(c, form, stamp):
