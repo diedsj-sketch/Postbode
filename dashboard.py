@@ -279,8 +279,11 @@ def dashboard_page(token, notice=''):
     notice_html = f'<div class="notice">{esc(notice)}</div>' if notice else ''
     return shell(f'''<header><div><p class="eyebrow">POSTBODE CONTROL</p><h1>Money overview</h1></div>
       <form method="post" action="/dashboard/logout">{token_field}<button class="quiet">Sign out</button></form></header>
-      <main>{notice_html}<nav><a href="#overview">Overview</a><a href="#review">Review <b>{len(review)}</b></a>
-      <a href="#planning">Payment planning</a><a href="#cases">Cases</a><a href="#obligations">Debts</a><a href="#gmail">Gmail</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
+      <main>{notice_html}<nav><a href="#accounts">Update balances</a><a href="#today">Pay today</a><a href="#clarify">Clarifications</a><a href="#reference">Reference</a></nav>
+      <section id="accounts"><h2>1. Update today’s balances</h2><p>Enter current available balances. Keep company and personal accounts separate.</p>
+      <div class="grid">{account_forms}</div></section>
+      {daily_panel()}
+      <details id="reference"><summary>Reference: cases, agreements, cashflow assumptions and history</summary>
       {planning_panel(token_field)}
       <section id="overview"><div class="section-title"><div><p class="eyebrow">SEPARATE LEDGERS</p><h2>Available cash and exposure</h2></div><p>Forecasts depend on current balances, known dates and recorded arrangements. Missing inputs are flagged below.</p></div>
       <div class="metrics">{''.join(cards)}</div></section>
@@ -293,11 +296,54 @@ def dashboard_page(token, notice=''):
       <tbody>{''.join(forecast_rows) or '<tr><td colspan="5">Add balances, amounts and next dates to generate a forecast.</td></tr>'}</tbody></table></div></section>
       {gmail_panel(token_field, ledger_options)}
       {cases_panel(token_field)}
-      <section id="accounts"><div class="section-title"><div><p class="eyebrow">OPENING POSITION</p><h2>Bank balances</h2></div><p>Update these whenever you reconcile the dashboard.</p></div>
-      <div class="grid">{account_forms}</div></section>
       <section id="recurring"><div class="section-title"><div><p class="eyebrow">PLANNED</p><h2>Recurring income and fixed costs</h2></div></div>
       <div class="grid">{recurring_forms}</div>{new_recurring(token_field, ledger_options)}</section>
-      </main>''')
+      </details></main>''')
+
+
+def daily_panel():
+    from planning import forecast,today
+    with db() as c:
+        result=forecast(c)
+        ready=bool(c.execute('SELECT 1 FROM finance_plan_baseline').fetchone())
+    problems=list(result['issues'])
+    if not ready:problems.insert(0,'Starting balances and budget have not been initialized')
+    if result['personal_minimum']<result['reserve']:
+        problems.insert(0,'Projected personal balance falls below the reserve')
+    if any(v<0 for k,v in result['minimum'].items() if k!='personal'):
+        problems.insert(0,'A business account group has a projected funding shortfall')
+    due=[r for r in result['rows'] if r['date']==today() and r['amount']<0]
+    personal=result['opening'].get('personal',0)
+    heading='Payment recommendations paused' if problems else 'Today’s forecast-supported payments'
+    items=''.join(f'<li>{esc(r["ledger"])} · {esc(r["name"])}: <strong>{money(-r["amount"])}</strong></li>' for r in due)
+    if problems:
+        content='<p>No payment is labelled safe while required information is missing or the forecast breaches a cash limit. Existing due dates still apply.</p>'
+        content+='<p>'+esc(problems[0])+'.</p>'
+        content+='<details><summary>What needs resolving ('+str(len(problems))+')</summary><ul>'+''.join('<li>'+esc(p)+'</li>' for p in problems)+'</ul></details>'
+        if items:content+='<details><summary>Due today, not cleared for payment</summary><ul>'+items+'</ul></details>'
+    else:
+        content='<ul>'+items+'</ul>' if items else '<p>No recorded payments are due today.</p>'
+        content+='<p>Based on the recorded 90-day forecast, not a guarantee against unrecorded spending or delayed income. Pay manually, then update the bank balance and record the payment in its case.</p>'
+    clarifications=clarification_panel(result['issues'])
+    return f'''<section id="today"><h2>2. What to pay today</h2>
+    <p>Personal accounts combined: <strong>{money(personal)}</strong> · Minimum reserve: <strong>{money(result['reserve'])}</strong></p>
+    <h3>{heading}</h3>{content}</section>{clarifications}'''
+
+
+def clarification_panel(issues):
+    groups=[
+        ('What are the current available bank balances?',('Missing balance:','Balance needs reconciliation:')),
+        ('On which dates are your regular bills paid?',('Payment timing unknown:','Amount or payment date missing:')),
+        ('Which earlier instalments have you already paid?',('Past-due instalment,','Payment reconciliation,')),
+        ('Which payment details still need confirmation?',('Existing instalment needs','Accepted arrangement incomplete:','Incomplete existing commitment:')),
+    ]
+    cards=[]
+    for title,prefixes in groups:
+        matching=[i for i in issues if i.startswith(prefixes)]
+        if not matching:continue
+        detail=''.join('<li>'+esc(i)+'</li>' for i in matching)
+        cards.append('<details><summary>'+esc(title)+' ('+str(len(matching))+')</summary><ul>'+detail+'</ul></details>')
+    return '<section id="clarify"><h2>3. Needs your clarification</h2><p>These unknowns affect the payment plan. Agreement dates already in Gmail should be recovered from the source, not re-entered by you.</p>'+(''.join(cards) if cards else '<p>No clarification requests identified from the current forecast.</p>')+'</section>'
 
 
 def ledger_name(ident, ledgers):
