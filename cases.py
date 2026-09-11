@@ -277,7 +277,9 @@ def panel(token):
         rows=c.execute('SELECT * FROM finance_cases ORDER BY ledger_id,creditor,id').fetchall()
         instalments=c.execute('SELECT * FROM finance_instalments ORDER BY due_date,id').fetchall()
         links=c.execute('SELECT * FROM finance_case_mail').fetchall()
-        drafts=c.execute("SELECT * FROM finance_case_outreach WHERE status='draft'").fetchall()
+        drafts=c.execute("SELECT * FROM finance_case_outreach WHERE status IN ('draft','planner-draft')").fetchall()
+        from payment_planner import panel as payment_panel
+        queue=payment_panel(c,esc,money)
     cards=[]
     for r in rows:
         schedule=''
@@ -302,4 +304,4 @@ def panel(token):
         <input type="hidden" name="id" value="{esc(d['case_id'])}"><button>I sent this myself</button></form></details>'''
     return f'''<section id="cases"><h2>Consolidated cases and existing arrangements</h2>
     <p>{len(rows)} cases, {len(instalments)} preserved instalments. Proposals awaiting replies are not restarted. No creditor messages are sent.</p>
-    <div class="stack">{''.join(cards)}</div><h3>Drafts, not sent</h3>{draft_cards or '<p>No new draft requires sending. Existing proposals remain in their original case history.</p>'}</section>'''
+    {queue}<div class="stack">{''.join(cards)}</div><h3>Drafts, not sent</h3>{draft_cards or '<p>No new draft requires sending. Existing proposals remain in their original case history.</p>'}</section>'''

@@ -169,6 +169,8 @@ def apply_action(form):
                        frequency, valid_date(form.get('next_date'))))
         else:
             raise ValueError('Unknown action')
+        from payment_planner import refresh
+        refresh(c,stamp)
 
 
 def add_month(value):

@@ -75,6 +75,8 @@ def ingest(c, payload, stamp):
         (stamp,stamp,payload['generated_at'],None,json.dumps(payload,allow_nan=False)))
     from cases import import_snapshot
     import_snapshot(c, payload, stamp)
+    from payment_planner import refresh
+    refresh(c,stamp)
     return count
 
 
