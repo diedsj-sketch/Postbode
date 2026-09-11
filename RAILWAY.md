@@ -60,6 +60,7 @@ them in chat. No existing OpenAI key is imported into the local workspace by thi
 | `PROCESSING_ENABLED` | `false` until connection checks are complete |
 | `ENABLE_EMAIL` | `false` until the pilot alert is authorized |
 | `ENABLE_CALENDAR` | `false` until the personal calendar is selected |
+| `DASHBOARD_PASSWORD` | Strong private password, sealed; enables `/dashboard` |
 
 `GOOGLE_TOKEN_JSON` replaces the local `GOOGLE_TOKEN_FILE` option for managed hosting.
 It must contain `client_id`, `client_secret` and `refresh_token` from the dedicated personal
@@ -80,13 +81,17 @@ Run the first end-to-end test on a synthetic letter. Inspect PDF storage, amount
 and the configured alert destination. Only then point Postbode's personal v2 webhook at the real
 HTTPS endpoint and enable processing. A successful deployment alone is not activation.
 
+The financial dashboard is unavailable until `DASHBOARD_PASSWORD` is configured. Its session
+cookie is HTTPS-only and expires after 12 hours. The dashboard contains financial data, so do
+not reuse the webhook secret, Google token or an ordinary account password.
+
 Enable volume backups and an external uptime monitor before relying on this for deadlines.
 Railway's deployment health check is not a continuous monitor. Queue failures need monitoring
 as described in README.md. Monitor storage because raw event JSON also contains the base64 PDF.
 
 ## Verification
 
-Run `python -m unittest -v test_mailroom test_serve`.
+Run `python -m unittest -v`.
 
 The additional deployment tests exercise setup mode, Railway's assigned port, missing
 credentials, missing volume and companion-process shutdown. Cloud build and live Google,

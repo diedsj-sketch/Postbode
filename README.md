@@ -8,7 +8,12 @@ Postbode v2 webhook -> signature and recipient validation -> durable SQLite queu
 original PDF and OCR preserved -> structured AI extraction -> Google Drive archive ->
 optional private calendar deadline -> optional email alert to the configured owner.
 
-- Original PDFs are filed in `Personal mail / year / category` in Drive.
+- Original PDFs are filed in `Personal mail / recipient / year / category` in Drive.
+- A private `/dashboard` keeps personal, Cloudstep Holding, Growth Technology Group and
+  Mesdagh Beheer balances and cashflow separate. Mail-derived payment requests enter a
+  review queue and affect forecasts only after confirmation.
+- Bank balances and recurring schedules are maintained manually in the dashboard. This
+  release does not connect to bank feeds and cannot infer whether an obligation was paid.
 - Local records retain the original event, OCR, structured analysis and processing state.
 - `export` produces a searchable CSV register with Drive links, dates, amounts and actions.
   A live Google Sheet register is not implemented.
@@ -74,7 +79,7 @@ only when a different deployment destination has been selected. Python does not 
 automatically.
 
 ```sh
-python -m unittest -v test_mailroom
+python -m unittest -v
 python authorize_google.py --client credentials.json --output token.json
 docker compose up -d --build
 docker compose exec worker python mailroom.py status

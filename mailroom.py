@@ -77,11 +77,138 @@ def db():
         next_attempt REAL NOT NULL DEFAULT 0, error TEXT,
         analysis TEXT, drive_id TEXT, calendar_id TEXT, email_state TEXT,
         email_id TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS finance_ledgers (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, kind TEXT NOT NULL
+        CHECK(kind IN ('personal','company')))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS finance_accounts (
+        id TEXT PRIMARY KEY, ledger_id TEXT NOT NULL REFERENCES finance_ledgers(id),
+        name TEXT NOT NULL, balance_cents INTEGER, updated_at TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        UNIQUE(ledger_id,name))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS finance_recurring (
+        id TEXT PRIMARY KEY, ledger_id TEXT NOT NULL REFERENCES finance_ledgers(id),
+        name TEXT NOT NULL, direction TEXT NOT NULL CHECK(direction IN ('income','expense')),
+        amount_cents INTEGER, frequency TEXT NOT NULL CHECK(frequency IN ('weekly','monthly')),
+        next_date TEXT, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        UNIQUE(ledger_id,name,direction))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS finance_obligations (
+        id TEXT PRIMARY KEY, ledger_id TEXT REFERENCES finance_ledgers(id),
+        mail_id TEXT UNIQUE REFERENCES mail(id), creditor TEXT NOT NULL,
+        description TEXT NOT NULL, amount_cents INTEGER, outstanding_cents INTEGER,
+        due_date TEXT, status TEXT NOT NULL
+        CHECK(status IN ('review','confirmed','paid','dismissed')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, paid_at TEXT)''')
+    seed_finance(c)
     try:
         with c:
             yield c
     finally:
         c.close()
+
+
+FINANCE_LEDGERS = (
+    ('personal', 'Personal', 'personal'),
+    ('cloudstep', 'Cloudstep Holding B.V.', 'company'),
+    ('growth', 'Growth Technology Group', 'company'),
+    ('mesdagh', 'Mesdagh Beheer B.V.', 'company'),
+)
+
+FINANCE_ACCOUNTS = (
+    ('personal-rabobank', 'personal', 'Rabobank'),
+    ('personal-bunq', 'personal', 'bunq'),
+    ('cloudstep-adyen', 'cloudstep', 'Adyen'),
+    ('growth-ing', 'growth', 'ING'),
+    ('growth-bunq', 'growth', 'bunq'),
+    ('mesdagh-bunq', 'mesdagh', 'bunq'),
+)
+
+FINANCE_INCOME = (
+    ('personal-salary', 'personal', 'Salary into Rabobank', 'monthly'),
+    ('personal-tax-returns', 'personal', 'Monthly tax returns', 'monthly'),
+    ('personal-denise', 'personal', 'Income from Denise', 'monthly'),
+    ('cloudstep-openprovider', 'cloudstep', 'Openprovider monthly fee', 'monthly'),
+    ('cloudstep-airbnb', 'cloudstep', 'Airbnb weekly fees', 'weekly'),
+)
+
+FINANCE_EXPENSES = (
+    ('personal-rent', 'personal', 'Rotterdam rent', 210000, 'monthly'),
+    ('personal-mortgage', 'personal', 'Mortgage', 220000, 'monthly'),
+    ('personal-alimony', 'personal', 'Alimony', 58500, 'monthly'),
+    ('personal-mobile', 'personal', 'Mobile phone', 10000, 'monthly'),
+    ('personal-car-lease', 'personal', 'Car lease', 125000, 'monthly'),
+    ('personal-car-insurance', 'personal', 'Car insurance', 25000, 'monthly'),
+    ('personal-health-insurance', 'personal', 'Health insurance', 15000, 'monthly'),
+    ('personal-living', 'personal', 'Food and discretionary spending', 150000, 'monthly'),
+)
+
+
+def seed_finance(connection):
+    """Idempotently create the user's ledgers and known account/income structure."""
+    connection.executemany(
+        'INSERT OR IGNORE INTO finance_ledgers(id,name,kind) VALUES(?,?,?)',
+        FINANCE_LEDGERS,
+    )
+    stamp = now()
+    connection.executemany(
+        '''INSERT OR IGNORE INTO finance_accounts(id,ledger_id,name,updated_at)
+           VALUES(?,?,?,?)''',
+        [(ident, ledger, name, stamp) for ident, ledger, name in FINANCE_ACCOUNTS],
+    )
+    connection.executemany(
+        '''INSERT OR IGNORE INTO finance_recurring
+           (id,ledger_id,name,direction,frequency) VALUES(?,?,?,'income',?)''',
+        FINANCE_INCOME,
+    )
+    connection.executemany(
+        '''INSERT OR IGNORE INTO finance_recurring
+           (id,ledger_id,name,direction,amount_cents,frequency)
+           VALUES(?,?,?,'expense',?,?)''',
+        FINANCE_EXPENSES,
+    )
+
+
+RECIPIENT_LEDGER_NAMES = {
+    'Diederik Sjardijn': 'personal',
+    'Cloudstep Holding B.V.': 'cloudstep',
+    'Growth Technology Group': 'growth',
+    'Mesdagh Beheer B.V.': 'mesdagh',
+}
+
+
+def analysis_amount_cents(analysis):
+    """Convert an evidenced positive EUR amount to cents, otherwise leave it for review."""
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+    value = analysis.amount.value
+    if not value or analysis.currency.value not in (None, 'EUR'):
+        return None
+    try:
+        amount = Decimal(value)
+        if not amount.is_finite() or amount < 0:
+            return None
+        return int((amount * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def propose_financial_obligation(mail_id, recipient, analysis):
+    """Create one review-only candidate from actionable mail, without changing cashflow."""
+    if analysis.action != 'pay':
+        return None
+    stamp = now()
+    amount = analysis_amount_cents(analysis)
+    ledger = RECIPIENT_LEDGER_NAMES.get(recipient)
+    status = 'review'
+    with db() as c:
+        ident = 'mail-' + mail_id
+        c.execute(
+            '''INSERT OR IGNORE INTO finance_obligations
+               (id,ledger_id,mail_id,creditor,description,amount_cents,
+                outstanding_cents,due_date,status,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
+            (ident, ledger, mail_id, analysis.sender[:200], analysis.subject[:500],
+             amount, amount, analysis.deadline.value, status, stamp, stamp),
+        )
+    return ident
 
 
 class Invalid(ValueError):
@@ -274,6 +401,9 @@ def public_page(path):
 
 
 def application(environ, start_response):
+    if environ.get('PATH_INFO', '').startswith('/dashboard'):
+        from dashboard import handle
+        return handle(environ, start_response)
     if environ.get('REQUEST_METHOD') in ('GET', 'HEAD'):
         page = public_page(environ.get('PATH_INFO'))
         if page is not None:
@@ -669,6 +799,7 @@ def process(row, analyzer=classify, google_factory=Google):
          else analyzer(analysis_input))
     update(ident,analysis=a.model_dump_json())
     atomic_file(original / 'analysis.json',a.model_dump_json(indent=2).encode())
+    propose_financial_obligation(ident, recipient, a)
     google = google_factory()
     drive_id = google.archive(row,a,pdf,recipient) if pdf else None
     link = 'https://drive.google.com/file/d/'+drive_id+'/view' if drive_id else 'PDF unavailable; check Postbode'
