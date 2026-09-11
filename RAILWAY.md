@@ -51,7 +51,8 @@ them in chat. No existing OpenAI key is imported into the local workspace by thi
 | `OPENAI_MODEL` | `gpt-4.1-mini` |
 | `DATA_DIR` | `/data` |
 | `POSTBODE_WEBHOOK_SECRET` | Signing secret configured at Postbode, sealed |
-| `POSTBODE_RECIPIENT_UUID` | Verified personal recipient UUID |
+| `POSTBODE_RECIPIENTS_JSON` | UUID-to-profile allowlist for every accepted person and entity |
+| `POSTBODE_RECIPIENT_UUID` | Legacy single-recipient fallback; ignored when the JSON directory is present |
 | `ALERT_EMAIL` | Owner's verified personal Gmail address |
 | `GOOGLE_TOKEN_JSON` | Dedicated Google OAuth authorization JSON, sealed |
 | `GOOGLE_DRIVE_FOLDER_ID` | Optional; otherwise the app creates its archive |
@@ -66,6 +67,14 @@ Google authorization. Connecting Google to ChatGPT does not create these service
 The provided `authorize_google.py` creates that grant on the user's computer. A browser-based
 hosted Google consent route is not part of this release and would need additional implementation
 if setup must be completed entirely from a phone.
+
+For multiple recipients, configure `POSTBODE_RECIPIENTS_JSON` as a JSON object whose keys
+are canonical Postbode recipient UUIDs. A value may be a display-name string or an object such
+as `{"name":"Diederik Sjardijn","aliases":["DMJ Sjardijn"]}`. Aliases help the analysis
+recognize initials and alternate addressee spellings, but routing is based only on the trusted
+webhook UUID, never on an AI guess from OCR. The service creates a recipient folder below
+`Personal mail`, prefixes email and calendar subjects with the canonical display name, and
+rejects UUIDs outside the allowlist.
 
 Run the first end-to-end test on a synthetic letter. Inspect PDF storage, amount/date extraction
 and the configured alert destination. Only then point Postbode's personal v2 webhook at the real
