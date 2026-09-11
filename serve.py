@@ -66,9 +66,11 @@ def commands(env):
                           '--workers', '1', '--threads', '2', '--timeout', '60',
                           'mailroom:application'])]
     if env.get('PROCESSING_ENABLED') == 'true':
-        required = ['OPENAI_API_KEY', 'POSTBODE_WEBHOOK_SECRET', 'POSTBODE_RECIPIENT_UUID', 'ALERT_EMAIL']
+        required = ['OPENAI_API_KEY', 'POSTBODE_WEBHOOK_SECRET', 'ALERT_EMAIL']
         if any(not env.get(k) for k in required):
             raise ValueError('Processing configuration incomplete')
+        if not (env.get('POSTBODE_RECIPIENTS_JSON') or env.get('POSTBODE_RECIPIENT_UUID')):
+            raise ValueError('Recipient configuration missing')
         if not (env.get('GOOGLE_TOKEN_JSON') or env.get('GOOGLE_TOKEN_FILE')):
             raise ValueError('Google authorization missing')
         if env.get('ENABLE_CALENDAR') == 'true' and not env.get('GOOGLE_CALENDAR_ID'):
@@ -144,6 +146,17 @@ def supervise(specs):
 if __name__ == '__main__':
     try:
         specs = commands(os.environ)
+        from mailroom import recipient_profiles
+        profiles = recipient_profiles()
+        if not profiles:
+            raise ValueError('Recipient configuration missing')
+        print(json.dumps({'routing_configuration': {
+            'recipient_count': len(profiles),
+            'alias_count': sum(len(p['aliases']) for p in profiles.values()),
+            'processes': [name for name, command in specs],
+            'email_enabled': os.environ.get('ENABLE_EMAIL') == 'true',
+            'calendar_enabled': os.environ.get('ENABLE_CALENDAR') == 'true',
+        }}, sort_keys=True), flush=True)
         prepare_volume()
         log_webhook_secret_fingerprint(os.environ)
         run_startup_connection_check(os.environ)
