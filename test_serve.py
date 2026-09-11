@@ -77,6 +77,12 @@ class DeploymentTests(unittest.TestCase):
                              'ALERT_EMAIL','GOOGLE_TOKEN_JSON'],'synthetic')
         env['PROCESSING_ENABLED']='true'
         self.assertEqual([n for n,c in serve.commands(env)],['receiver','worker'])
+    def test_enabled_processing_accepts_recipient_directory(self):
+        env = dict.fromkeys(['OPENAI_API_KEY','POSTBODE_WEBHOOK_SECRET',
+                             'ALERT_EMAIL','GOOGLE_TOKEN_JSON'],'synthetic')
+        env['POSTBODE_RECIPIENTS_JSON']='{"00000000-0000-4000-8000-000000000001":"Test"}'
+        env['PROCESSING_ENABLED']='true'
+        self.assertEqual([n for n,c in serve.commands(env)],['receiver','worker'])
     def test_missing_railway_volume_blocks_startup(self):
         with tempfile.TemporaryDirectory() as d:
             with patch.dict(os.environ,{'DATA_DIR':d,'RAILWAY_ENVIRONMENT_ID':'test'},clear=True):
