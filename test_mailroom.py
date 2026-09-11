@@ -37,15 +37,19 @@ class FakeGoogle:
     archives=0
     calendars=0
     emails=0
-    def archive(self,row,a,pdf):
+    recipients=[]
+    def archive(self,row,a,pdf,recipient):
         type(self).archives+=1
+        type(self).recipients.append(recipient)
         m.update(row['id'],drive_id='file123')
         return 'file123'
-    def calendar(self,ident,a,link):
+    def calendar(self,ident,a,link,recipient):
         type(self).calendars+=1
+        type(self).recipients.append(recipient)
         return 'event123'
-    def notify(self,row,a,link):
+    def notify(self,row,a,link,recipient):
         type(self).emails+=1
+        type(self).recipients.append(recipient)
         m.update(row['id'],email_state='sent',email_id='message123')
 
 class Tests(unittest.TestCase):
@@ -56,6 +60,7 @@ class Tests(unittest.TestCase):
             'ENABLE_CALENDAR':'true','ENABLE_EMAIL':'true','ALERT_EMAIL':'self@example.com'})
         self.env.start()
         FakeGoogle.archives=FakeGoogle.calendars=FakeGoogle.emails=0
+        FakeGoogle.recipients=[]
     def tearDown(self):
         self.env.stop()
         self.tmp.cleanup()
@@ -77,6 +82,30 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.enqueue(p)[0],422)
         p=payload();p['document_sha256']='0'*64
         self.assertEqual(self.enqueue(p)[0],422)
+    def test_multiple_configured_recipients_are_accepted(self):
+        other='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        directory=json.dumps({RECIPIENT:'Diederik Sjardijn',other:'Cloudstep Holding B.V.'})
+        with patch.dict(os.environ,{'POSTBODE_RECIPIENTS_JSON':directory}):
+            p=payload();p['recipient']['uuid']=other
+            self.assertEqual(self.enqueue(p)[0],202)
+            p=payload();p['recipient']['uuid']='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+            self.assertEqual(self.enqueue(p)[0],422)
+    def test_recipient_aliases_preserve_canonical_display_name(self):
+        directory=json.dumps({RECIPIENT:{
+            'name':'Diederik Sjardijn','aliases':['DMJ Sjardijn']}})
+        with patch.dict(os.environ,{'POSTBODE_RECIPIENTS_JSON':directory}):
+            profiles=m.recipient_profiles()
+            self.assertEqual(profiles[RECIPIENT]['aliases'],['DMJ Sjardijn'])
+            self.assertEqual(m.recipient_directory()[RECIPIENT],'Diederik Sjardijn')
+            self.enqueue()
+            captured=[]
+            def inspect(p):
+                captured.append(p)
+                return analysis(p)
+            m.worker_once(inspect,FakeGoogle)
+        self.assertEqual(captured[0]['_mailroom_expected_recipient'],'Diederik Sjardijn')
+        self.assertEqual(captured[0]['_mailroom_recipient_aliases'],['DMJ Sjardijn'])
+        self.assertEqual(FakeGoogle.recipients,['Diederik Sjardijn']*3)
     def test_legacy_payload_rejected(self):
         self.assertEqual(self.enqueue({'letter':payload()})[0],422)
     def test_duplicates_and_document_revisions(self):
@@ -100,6 +129,7 @@ class Tests(unittest.TestCase):
         self.enqueue()
         self.assertFalse(m.worker_once(analysis,FakeGoogle))
         self.assertEqual((FakeGoogle.archives,FakeGoogle.calendars,FakeGoogle.emails),(1,1,1))
+        self.assertEqual(FakeGoogle.recipients,['Default recipient']*3)
     def test_evidence_missing_blocks_calendar(self):
         self.enqueue()
         def bad(p):
@@ -164,9 +194,9 @@ class Tests(unittest.TestCase):
             calls.append(1)
             raise TimeoutError()
         g.call=fail
-        with self.assertRaises(TimeoutError): g.notify(r,analysis(payload()),'test')
+        with self.assertRaises(TimeoutError): g.notify(r,analysis(payload()),'test','Diederik Sjardijn')
         self.assertEqual(self.row()['email_state'],'uncertain')
-        with self.assertRaises(RuntimeError): g.notify(self.row(),analysis(payload()),'test')
+        with self.assertRaises(RuntimeError): g.notify(self.row(),analysis(payload()),'test','Diederik Sjardijn')
         self.assertEqual(len(calls),1)
     def test_drive_id_persisted_before_upload_and_reused(self):
         self.enqueue()
@@ -185,7 +215,7 @@ class Tests(unittest.TestCase):
             raise AssertionError(url)
         g.call=call
         for _ in range(2):
-            with self.assertRaises(TimeoutError):g.archive(self.row(),analysis(payload()),PDF)
+            with self.assertRaises(TimeoutError):g.archive(self.row(),analysis(payload()),PDF,'Diederik Sjardijn')
         self.assertEqual(len(generated),1)
     def test_calendar_retries_treat_conflict_as_success(self):
         g=object.__new__(m.Google)
@@ -197,11 +227,12 @@ class Tests(unittest.TestCase):
             return {}
         g.call=call
         with patch.dict(os.environ,{'GOOGLE_CALENDAR_ID':'personal@example.com'}):
-            one=g.calendar('a'*64,analysis(payload()),'link')
-            two=g.calendar('a'*64,analysis(payload()),'link')
+            one=g.calendar('a'*64,analysis(payload()),'link','Diederik Sjardijn')
+            two=g.calendar('a'*64,analysis(payload()),'link','Diederik Sjardijn')
         self.assertEqual(one,two)
         self.assertEqual(bodies[0]['id'],bodies[1]['id'])
         self.assertEqual(bodies[0]['visibility'],'private')
+        self.assertTrue(bodies[0]['summary'].startswith('[Diederik Sjardijn]'))
         self.assertNotIn('attendees',bodies[0])
     def test_body_limits(self):
         statuses=[]
