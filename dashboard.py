@@ -114,7 +114,10 @@ def apply_action(form):
     stamp = now()
     action = form.get('action')
     with db() as c:
-        if action == 'account':
+        if action == 'gmail-case':
+            from finance_sync import action as gmail_action
+            gmail_action(c, form, stamp)
+        elif action == 'account':
             ident = form.get('id')
             require_known(c, 'finance_accounts', ident)
             c.execute('UPDATE finance_accounts SET balance_cents=?,updated_at=? WHERE id=?',
@@ -135,6 +138,8 @@ def apply_action(form):
             if ledger:
                 require_known(c, 'finance_ledgers', ledger)
             amount = cents(form.get('amount'))
+            if status == 'confirmed' and (amount is None or not ledger):
+                raise ValueError('Confirm the ledger and amount before confirming a debt')
             c.execute('''UPDATE finance_obligations SET ledger_id=?,amount_cents=?,
                          outstanding_cents=?,due_date=?,status=?,updated_at=?,paid_at=? WHERE id=?''',
                       (ledger, amount, 0 if status == 'paid' else amount,
@@ -229,6 +234,7 @@ def login_page(error=''):
 
 
 def dashboard_page(token, notice=''):
+    from finance_sync import panel as gmail_panel
     ledgers, accounts, recurring, obligations, forecasts = page_data()
     token_field = f'<input type="hidden" name="csrf" value="{csrf(token)}">'
     ledger_options = '<option value="">Needs assignment</option>' + ''.join(
@@ -258,7 +264,7 @@ def dashboard_page(token, notice=''):
     return shell(f'''<header><div><p class="eyebrow">POSTBODE CONTROL</p><h1>Money overview</h1></div>
       <form method="post" action="/dashboard/logout">{token_field}<button class="quiet">Sign out</button></form></header>
       <main>{notice_html}<nav><a href="#overview">Overview</a><a href="#review">Review <b>{len(review)}</b></a>
-      <a href="#obligations">Debts</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
+      <a href="#obligations">Debts</a><a href="#gmail">Gmail</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
       <section id="overview"><div class="section-title"><div><p class="eyebrow">SEPARATE LEDGERS</p><h2>Available cash and exposure</h2></div><p>Only confirmed obligations affect projections.</p></div>
       <div class="metrics">{''.join(cards)}</div></section>
       <section id="review"><div class="section-title"><div><p class="eyebrow">INCOMING MAIL</p><h2>Needs review</h2></div><p>Approve, correct or dismiss each proposed obligation.</p></div>
@@ -268,6 +274,7 @@ def dashboard_page(token, notice=''):
       <section><div class="section-title"><div><p class="eyebrow">NEXT 60 DAYS</p><h2>Cashflow schedule</h2></div></div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Ledger</th><th>Item</th><th>Movement</th><th>Balance</th></tr></thead>
       <tbody>{''.join(forecast_rows) or '<tr><td colspan="5">Add balances, amounts and next dates to generate a forecast.</td></tr>'}</tbody></table></div></section>
+      {gmail_panel(token_field, ledger_options)}
       <section id="accounts"><div class="section-title"><div><p class="eyebrow">OPENING POSITION</p><h2>Bank balances</h2></div><p>Update these whenever you reconcile the dashboard.</p></div>
       <div class="grid">{account_forms}</div></section>
       <section id="recurring"><div class="section-title"><div><p class="eyebrow">PLANNED</p><h2>Recurring income and fixed costs</h2></div></div>

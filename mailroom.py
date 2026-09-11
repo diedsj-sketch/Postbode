@@ -99,6 +99,8 @@ def db():
         CHECK(status IN ('review','confirmed','paid','dismissed')),
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, paid_at TEXT)''')
     seed_finance(c)
+    from finance_sync import schema
+    schema(c)
     try:
         with c:
             yield c
@@ -871,6 +873,8 @@ def main():
     args=parser.parse_args()
     if args.command=='worker':
         while True:
+            from finance_sync import poll
+            poll()
             if not worker_once():
                 time.sleep(5)
     elif args.command=='once':
