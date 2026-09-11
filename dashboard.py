@@ -114,7 +114,10 @@ def apply_action(form):
     stamp = now()
     action = form.get('action')
     with db() as c:
-        if action == 'gmail-case':
+        if action in ('plan-baseline', 'plan-reserve'):
+            from planning import action as planning_action
+            planning_action(c, form, stamp)
+        elif action == 'gmail-case':
             from finance_sync import action as gmail_action
             gmail_action(c, form, stamp)
         elif action == 'account':
@@ -235,6 +238,7 @@ def login_page(error=''):
 
 def dashboard_page(token, notice=''):
     from finance_sync import panel as gmail_panel
+    from planning import panel as planning_panel
     ledgers, accounts, recurring, obligations, forecasts = page_data()
     token_field = f'<input type="hidden" name="csrf" value="{csrf(token)}">'
     ledger_options = '<option value="">Needs assignment</option>' + ''.join(
@@ -264,7 +268,8 @@ def dashboard_page(token, notice=''):
     return shell(f'''<header><div><p class="eyebrow">POSTBODE CONTROL</p><h1>Money overview</h1></div>
       <form method="post" action="/dashboard/logout">{token_field}<button class="quiet">Sign out</button></form></header>
       <main>{notice_html}<nav><a href="#overview">Overview</a><a href="#review">Review <b>{len(review)}</b></a>
-      <a href="#obligations">Debts</a><a href="#gmail">Gmail</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
+      <a href="#planning">Payment planning</a><a href="#obligations">Debts</a><a href="#gmail">Gmail</a><a href="#accounts">Accounts</a><a href="#recurring">Recurring</a></nav>
+      {planning_panel(token_field)}
       <section id="overview"><div class="section-title"><div><p class="eyebrow">SEPARATE LEDGERS</p><h2>Available cash and exposure</h2></div><p>Only confirmed obligations affect projections.</p></div>
       <div class="metrics">{''.join(cards)}</div></section>
       <section id="review"><div class="section-title"><div><p class="eyebrow">INCOMING MAIL</p><h2>Needs review</h2></div><p>Approve, correct or dismiss each proposed obligation.</p></div>

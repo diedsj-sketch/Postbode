@@ -101,6 +101,8 @@ def db():
     seed_finance(c)
     from finance_sync import schema
     schema(c)
+    from planning import schema as planning_schema
+    planning_schema(c)
     try:
         with c:
             yield c
