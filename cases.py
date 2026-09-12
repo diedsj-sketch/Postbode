@@ -220,6 +220,22 @@ def payments(c,start,end):
             if not r['locally_paid_at'] and any(x in s for x in ('uncredited','still counts','not matched')):
                 issues.append(f"Payment reconciliation, do not pay twice: {r['creditor']} / {r['id']}")
             continue
+        # A source month is a known payment window, not a missing agreement.
+        # Reserve at its start (or today), never invent an agreed payment day.
+        fields=json.loads(r['fields'])
+        period=fields.get('Period','')
+        month=None
+        if fields.get('Date precision')=='Month only' and isinstance(period,str):
+            try:month=dt.datetime.strptime(period,'%B %Y').date().replace(day=1)
+            except ValueError:pass
+        if month and not r['due_date'] and not r['retained'] and r['ledger_id'] and r['amount_cents'] is not None and not any(x in s for x in ('proposed','proposal','not accepted','cancel','disputed','uncredited')):
+            import calendar
+            last=month.replace(day=calendar.monthrange(month.year,month.month)[1])
+            if last>=start:
+                if month<=end:
+                    events.append((max(start,month),r['ledger_id'],-r['amount_cents'],'Reserve only · '+r['creditor']+' / '+r['id'],0))
+                    issues.append(f"Payment window reserved ({period}); exact day not agreed: {r['creditor']} / {r['id']}")
+                continue
         if r['retained'] or not r['ledger_id'] or r['amount_cents'] is None or not r['due_date']:
             issues.append(f"Existing instalment needs a date, amount or source check: {r['creditor']} / {r['id']}")
             continue

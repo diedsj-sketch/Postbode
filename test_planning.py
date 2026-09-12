@@ -36,7 +36,8 @@ class PlanningTests(unittest.TestCase):
             self.assertTrue(all(row[1]==0 for row in transfers))
             self.assertEqual(sum(e['amount'] for e in r['rows'] if e['ledger']=='personal'),715000)
             self.assertTrue(any('Mortgage' in i for i in r['issues']))
-            self.assertTrue(any('Miscellaneous' in i for i in r['issues']))
+            self.assertFalse(any('Miscellaneous' in i for i in r['issues']))
+            self.assertTrue(all(x['date'].day==25 for x in r['rows'] if x['name']=='Miscellaneous allowance'))
 
     def test_rent_expires_and_estimates_excluded(self):
         with db() as c:

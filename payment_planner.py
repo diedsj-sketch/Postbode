@@ -34,12 +34,7 @@ def refresh(c,stamp,start=None):
     schema(c)
     start=start or today();end=start+dt.timedelta(days=90)
     result=forecast(c,start=start)
-    # Case uncertainty is not a licence to assume zero expenditure.
-    blockers=list(result['issues'])
-    if any(value<0 for ledger,value in result['minimum'].items() if ledger!='personal'):
-        blockers.append('Company funding shortfall: transfers to personal cannot be assumed affordable')
-    if not c.execute('SELECT 1 FROM finance_plan_baseline').fetchone():
-        blockers.insert(0,'Starting position has not been applied')
+    from forecast_checks import classify,shortfall,describe
     c.execute('DELETE FROM finance_payment_plan')
     # Clear only machine-generated unsent drafts. Human-reported sends are immutable.
     c.execute("UPDATE finance_case_outreach SET status='superseded' WHERE status='planner-draft'")
@@ -62,6 +57,12 @@ def refresh(c,stamp,start=None):
             without=[r for r in rows if r is not event]
             original=event['date']
             candidate=safe_date(without,result['opening'].get(i['ledger_id'],0),i['ledger_id'],i['amount_cents'],original,end,reserve)
+            checks=classify(c,result,i['ledger_id'])
+            blockers=list(checks['blocking'])
+            if not c.execute('SELECT 1 FROM finance_plan_baseline').fetchone():blockers.insert(0,'Starting position has not been applied')
+            for dependency in checks['dependencies']-{i['ledger_id']}:
+                breach=shortfall(rows,result['opening'].get(dependency,0),dependency,0,start)
+                if breach:blockers.append(describe(breach,dependency+' funding'))
             if blockers:
                 state='forecast-incomplete';reason='No new promise: '+ '; '.join(blockers[:3])
             elif candidate==original:

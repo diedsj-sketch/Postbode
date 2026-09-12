@@ -21,6 +21,8 @@ def schema(c):
         end_date TEXT, transfer_id TEXT, active INTEGER NOT NULL DEFAULT 1)''')
     c.execute('''CREATE TABLE IF NOT EXISTS finance_plan_baseline (
         id INTEGER PRIMARY KEY CHECK(id=1), applied_at TEXT NOT NULL)''')
+    # Repair only the omitted date; preserve all user-edited amounts and dates.
+    c.execute("UPDATE finance_plan_rules SET day=25 WHERE id='cloudstep-misc' AND day IS NULL")
     c.execute("INSERT OR IGNORE INTO finance_plan_settings VALUES(1,50000,?)",
               (dt.datetime.now(dt.timezone.utc).isoformat(),))
 
@@ -43,7 +45,7 @@ def baseline(c, stamp):
         ('cloudstep-rent','cloudstep','Rent to personal',-250000,22,0,'2026-11-30','rent'),
         ('cloudstep-employee','cloudstep','Employee salary',-170000,25,0,None,None),
         ('cloudstep-payroll','cloudstep','Payroll tax',-200000,25,0,None,None),
-        ('cloudstep-misc','cloudstep','Miscellaneous allowance',-50000,None,1,None,None),
+        ('cloudstep-misc','cloudstep','Miscellaneous allowance',-50000,25,1,None,None),
     ]
     # Four monthly estimates, not a perpetual 625 EUR weekly recurrence.
     for day in (7,14,21,28):

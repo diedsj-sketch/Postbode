@@ -75,7 +75,7 @@ def action(c,f,stamp):
         details={'meaning':'Remaining current-month living allowance, including prior carryover'}
     elif action=='cockpit-movement':
         from planning import forecast
-        matches=[r for r in forecast(c)['rows'] if movement_id(r)==f.get('movement_id') and r['date']<=today()]
+        matches=[r for r in forecast(c)['rows'] if movement_id(r)==f.get('movement_id') and r['date']<=today() and not r['name'].startswith('Reserve only · ')]
         if len(matches)!=1:raise ValueError('Movement changed or is already confirmed. Reload first.')
         r=matches[0]
         details={'date':r['date'].isoformat(),'ledger':r['ledger'],'amount':r['amount'],'name':r['name']}
@@ -107,7 +107,9 @@ def model(c,ledger,start=None):
     accounts=list(c.execute('SELECT * FROM finance_accounts WHERE active=1 ORDER BY id'))
     own=[a for a in accounts if a['ledger_id']==ledger]
     available=sum(a['balance_cents'] or 0 for a in own) if own and all(a['balance_cents'] is not None for a in own) else None
-    problems=list(result['issues'])
+    from forecast_checks import classify,shortfall,describe
+    checks=classify(c,result,ledger)
+    problems=list(checks['blocking'])
     latest_paid=c.execute('''SELECT MAX(i.locally_paid_at) FROM finance_instalments i
         JOIN finance_cases c ON c.id=i.case_id WHERE c.ledger_id=?''',(ledger,)).fetchone()[0]
     for e in c.execute("SELECT recorded_at,details FROM cockpit_events WHERE kind='movement'"):
@@ -116,11 +118,13 @@ def model(c,ledger,start=None):
     if latest_paid and any(a['updated_at']<latest_paid for a in own):
         problems.insert(0,'Update bank balances after recording a payment or receipt')
     reconciliations=list(c.execute('SELECT * FROM cockpit_reconciliations WHERE resolved_at IS NULL ORDER BY recorded_at'))
-    if reconciliations:problems.insert(0,'Balance movements need reconciliation')
+    if any(r['ledger_id'] in checks['dependencies'] for r in reconciliations):problems.insert(0,'Balance movements need reconciliation')
     if not c.execute('SELECT 1 FROM finance_plan_baseline').fetchone():problems.insert(0,'Starting income and commitments need setup')
     budget=remaining(c,start)
     if ledger=='personal' and budget is None:problems.insert(0,'Set the remaining living allowance for this month')
-    if any(v<0 for k,v in result['minimum'].items() if k!='personal'):problems.insert(0,'Company funding shortfall affects the plan')
+    for dependency in checks['dependencies']-{ledger}:
+        breach=shortfall(result['rows'],result.get('opening',{}).get(dependency,0),dependency,0,start)
+        if breach:problems.insert(0,describe(breach,dependency+' funding needed for transfers'))
     # The forecast already reserves living expenses. Add back only this month's
     # living-budget debit before capping by the actual remaining allowance.
     rows=result['rows'];low=available or 0;running=low
@@ -129,13 +133,15 @@ def model(c,ledger,start=None):
         if ledger=='personal' and row['name']=='Food and discretionary spending' and row['date'].strftime('%Y-%m')==start.strftime('%Y-%m'):continue
         running+=row['amount'];low=min(low,running)
     floor=result['reserve'] if ledger=='personal' else 0
-    if low<floor:problems.insert(0,'The recorded commitments breach the cash reserve')
+    adjusted=[r for r in rows if not (ledger=='personal' and r['name']=='Food and discretionary spending' and r['date'].strftime('%Y-%m')==start.strftime('%Y-%m'))]
+    breach=shortfall(adjusted,available or 0,ledger,floor,start)
+    if breach and available is not None:problems.insert(0,describe(breach,'Reserve breach'))
     allowance=None if problems else max(0,min(budget,low-floor) if ledger=='personal' else low)
     upcoming=[r for r in rows if r['ledger']==ledger and start<=r['date']<=start+dt.timedelta(days=7)]
     incomes=[r['date'] for r in rows if r['ledger']==ledger and r['amount']>0 and r['date']>start and not r['estimated']]
     until=min(incomes) if incomes else None
     return dict(result=result,accounts=accounts,own=own,available=available,problems=list(dict.fromkeys(problems)),
-                budget=budget,allowance=allowance,upcoming=upcoming,until=until,reconciliations=reconciliations)
+                budget=budget,allowance=allowance,upcoming=upcoming,until=until,reconciliations=reconciliations,checks=checks,breach=breach)
 
 
 def page(token,notice='',ledger='personal'):
@@ -162,7 +168,7 @@ def page(token,notice='',ledger='personal'):
         actions.append(f'<article class="cc-task"><span>REVIEW &amp; SEND · DRAFT ONLY</span><h3>{esc(d["creditor"])}</h3><details><summary>Review prepared message</summary><textarea readonly rows="10">{esc(d["draft"])}</textarea><form method="post" action="/dashboard/action">{fields("case-draft-sent")}<input type="hidden" name="id" value="{esc(d["case_id"])}"><button>I sent this myself</button></form></details></article>')
     case_names={i['creditor']+' / '+i['id'] for i in instalments}
     for r in m['upcoming']:
-        if r['date']!=today() or r['name'] in case_names or r['name']=='Food and discretionary spending':continue
+        if r['name'].startswith('Reserve only · ') or r['date']!=today() or r['name'] in case_names or r['name']=='Food and discretionary spending':continue
         label='Confirm receipt' if r['amount']>0 else ('Due today · forecast not cleared' if m['problems'] else 'Pay manually')
         actions.append(f'<article class="cc-task"><span>{label}</span><h3>{esc(r["name"])}</h3><p>{money(r["amount"])}</p><form method="post" action="/dashboard/action">{fields("cockpit-movement")}<input type="hidden" name="movement_id" value="{movement_id(r)}"><button>{"Received in my bank account" if r["amount"]>0 else "I paid this"}</button></form><small>Confirm only after checking your bank. Update balances separately.</small></article>')
     questions=[]
@@ -176,6 +182,8 @@ def page(token,notice='',ledger='personal'):
     title='Available for everyday spending' if ledger=='personal' else 'Unallocated cash after commitments'
     amount='Not yet calculated' if m['allowance'] is None else money(m['allowance'])
     subtitle='Resolve the items below before relying on a spending allowance.' if m['problems'] else ('Until '+m['until'].strftime('%d %B') if m['until'] else 'No next income date confirmed')
+    background=''.join('<details><summary>'+esc(k)+' ('+str(len(v))+')</summary><ul>'+''.join('<li>'+esc(x)+'</li>' for x in v)+'</ul></details>' for k,v in m['checks']['groups'].items())
+    background+='<details><summary>Future assumptions</summary><ul>'+''.join('<li>'+esc(x)+'</li>' for x in m['checks']['warnings'])+'</ul></details>' if m['checks']['warnings'] else ''
     reasons=''.join('<li>'+esc(p)+'</li>' for p in m['problems'])
     options=''.join(f'<option value="{l["id"]}" {"selected" if l["id"]==ledger else ""}>{esc(l["name"])}</option>' for l in ledgers)
     banner=f'<p class="notice">{esc(notice)}</p>' if notice else ''
@@ -184,7 +192,7 @@ def page(token,notice='',ledger='personal'):
     <section class="cc-hero"><div><p class="eyebrow">{title}</p><h1>{amount}</h1><p>{subtitle}</p><details><summary>How this allowance works</summary><p>Remaining living budget: {money(m['budget']) if ledger=='personal' else 'Separate company ledger'}. Your allowance is capped by the recorded 90-day cashflow, not just today’s balance. Future income is not cash already received.</p><p>Manual balances and incomplete information cannot guarantee an actual minimum bank balance.</p></details></div><aside><p>Current available balance<strong>{money(m['available'])}</strong></p><p>{'Protected personal minimum' if ledger=='personal' else 'Company cash floor'}<strong>{money(m['result']['reserve'] if ledger=='personal' else 0)}</strong></p><p>{'Unused living allowance rolls forward' if ledger=='personal' else 'Not automatically available for dividends'}</p></aside></section>
     <div class="cc-columns"><section class="cc-surface"><h2>Today’s actions</h2>{''.join(actions) or '<p>No dated case actions identified for today. This does not mean all obligations are resolved.</p>'}<details><summary>Other payments and receipts due today</summary>{''.join('<p>'+esc(r['name'])+' · '+money(r['amount'])+'</p>' for r in m['upcoming'] if r['date']==today()) or '<p>No additional dated items.</p>'}</details></section>
     <aside><section class="cc-surface"><h2>Next 7 days</h2>{nextrows or '<p>No dated movements recorded.</p>'}<a href="/dashboard/reference#planning">Full cashflow outlook</a></section><section class="cc-surface"><h2>Needs your clarification</h2>{''.join(questions[:3]) or '<p>No direct questions identified.</p>'}{'<details><summary>More clarification items</summary>'+''.join(questions[3:])+'</details>' if len(questions)>3 else ''}<details><summary>Forecast checks ({len(m['problems'])})</summary><ul>{reasons}</ul><a href="/dashboard/reference#recurring">Review bill dates and assumptions</a></details></section></aside></div>
-    <div class="cc-reference"><a href="/dashboard/reference">Reference: cases, agreements, payment history and settings →</a></div><p class="cc-foot">Messages remain drafts. Payments are manual. Reconcile balances after paying.</p></main></div><style>{CSS}</style>''','Cashflow cockpit')
+    <div class="cc-reference"><details><summary>Case follow-up and future assumptions</summary>{background}</details><a href="/dashboard/reference">Reference: cases, agreements, payment history and settings →</a></div><p class="cc-foot">Messages remain drafts. Payments are manual. Reconcile balances after paying.</p></main></div><style>{CSS}</style>''','Cashflow cockpit')
 
 
 CSS='''
