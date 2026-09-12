@@ -2,7 +2,7 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home mailroom
-COPY mailroom.py dashboard.py finance_sync.py planning.py cases.py payment_planner.py cockpit.py ./
+COPY mailroom.py dashboard.py finance_sync.py planning.py cases.py payment_planner.py cockpit.py forecast_checks.py payment_cycle.py ./
 RUN mkdir /data && chown mailroom:mailroom /data
 USER mailroom
 ENV DATA_DIR=/data
