@@ -114,7 +114,10 @@ def apply_action(form):
     stamp = now()
     action = form.get('action')
     with db() as c:
-        if action in ('case-paid','case-draft-sent'):
+        if action and action.startswith('cockpit-'):
+            from cockpit import action as cockpit_action
+            cockpit_action(c,form,stamp)
+        elif action in ('case-paid','case-draft-sent'):
             from cases import action as case_action
             case_action(c,form,stamp)
         elif action in ('plan-baseline', 'plan-reserve'):
@@ -414,12 +417,20 @@ def handle(environ, start_response):
             if path != '/dashboard/action':
                 raise ValueError('Unknown request')
             apply_action(form)
-            return response(start_response, '303 See Other', b'', [('Location', '/dashboard?saved=1')])
+            target='/dashboard?saved=1'
+            if form.get('return_ledger') in ('personal','cloudstep','growth','mesdagh'):
+                target+='&ledger='+form['return_ledger']
+            return response(start_response, '303 See Other', b'', [('Location', target)])
         except (ValueError, KeyError) as exc:
-            return response(start_response, '400 Bad Request', dashboard_page(current, str(exc)))
+            from cockpit import page
+            return response(start_response, '400 Bad Request', page(current, str(exc)))
+    if method == 'GET' and path == '/dashboard/reference':
+        return response(start_response, '200 OK', dashboard_page(current))
     if method == 'GET' and path == '/dashboard':
         notice = 'Saved.' if urllib.parse.parse_qs(environ.get('QUERY_STRING', '')).get('saved') else ''
-        return response(start_response, '200 OK', dashboard_page(current, notice))
+        from cockpit import page
+        ledger=urllib.parse.parse_qs(environ.get('QUERY_STRING','')).get('ledger',['personal'])[0]
+        return response(start_response, '200 OK', page(current, notice,ledger))
     return response(start_response, '404 Not Found', shell('<main class="login"><h1>Not found</h1></main>'))
 
 

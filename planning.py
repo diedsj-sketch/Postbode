@@ -99,6 +99,16 @@ def forecast(c, start=None, days=90, include_estimates=False):
     for r in c.execute('SELECT * FROM finance_recurring WHERE active=1'):
         if r['id'] in replaced:
             continue
+        if r['id']=='personal-living' and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cockpit_budget'").fetchone():
+            from cockpit import remaining
+            budget=remaining(c,start)
+            if budget is not None:
+                events.append((start,'personal',-max(0,budget),r['name'],0))
+                monthly=c.execute('SELECT monthly_cents FROM cockpit_budget WHERE id=1').fetchone()[0]
+                for day in occurrences(1,start,end):
+                    if (day.year,day.month)!=(start.year,start.month):
+                        events.append((day,'personal',-monthly,r['name'],0))
+                continue
         if r['amount_cents'] is None or not r['next_date']:
             issues.append(f"Amount or payment date missing: {r['name']} ({r['ledger_id']})")
             continue
@@ -129,6 +139,14 @@ def forecast(c, start=None, days=90, include_estimates=False):
     from cases import payments
     commitments,case_issues=payments(c,start,end)
     events.extend(commitments)
+    # A receipt/payment confirmation removes that dated occurrence only, not
+    # the recurring rule. Bank balances are independently reconciled.
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cockpit_events'").fetchone():
+        confirmed=set()
+        for e in c.execute("SELECT details FROM cockpit_events WHERE kind='movement'"):
+            f=json.loads(e['details'])
+            confirmed.add((f['date'],f['ledger'],f['amount'],f['name']))
+        events=[e for e in events if (e[0].isoformat(),e[1],e[2],e[3]) not in confirmed]
     issues.extend(case_issues)
     status=c.execute('SELECT source_at,error FROM finance_gmail_sync WHERE id=1').fetchone()
     if not status or not status['source_at']:

@@ -61,7 +61,10 @@ class DashboardTests(unittest.TestCase):
         captured, body = self.request('/dashboard', cookie=cookie)
         self.assertEqual(captured['status'], '200 OK')
         self.assertIn(b'Cloudstep Holding B.V.', body)
-        self.assertIn(b'Airbnb weekly fees', body)
+        self.assertIn(b'Cashflow cockpit', body)
+        self.assertIn(b'/dashboard/reference',body)
+        _,reference=self.request('/dashboard/reference',cookie=cookie)
+        self.assertIn(b'Airbnb weekly fees', reference)
         self.assertNotIn(b'test-password', body)
 
     def test_account_update_requires_csrf_and_changes_only_its_ledger(self):
