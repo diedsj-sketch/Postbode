@@ -176,9 +176,13 @@ def forecast(c, start=None, days=90, include_estimates=False):
             low=min(low,running)
             if breach is None and running<reserve:
                 breach=r['date']
-    return {'rows':rows,'opening':opening,'closing':balances,'minimum':minimum,
+    result={'rows':rows,'opening':opening,'closing':balances,'minimum':minimum,
             'reserve':reserve,'personal_minimum':low,'first_breach':breach,
             'funding_gap':max(0,reserve-low),'issues':list(dict.fromkeys(issues))}
+    relevant=[a for a in accounts if a['ledger_id'] in ('personal','cloudstep')]
+    known=all(a['balance_cents'] is not None for a in relevant) and {a['ledger_id'] for a in relevant}=={'personal','cloudstep'}
+    result['dividend']=dividend_scenario(result,start,known)
+    return result
 
 
 def action(c, form, stamp):
@@ -213,9 +217,10 @@ def panel(token):
     issues=''.join(f'<li>{esc(i)}</li>' for i in result['issues'])
     rows=''.join(f'<tr><td>{r["date"]}</td><td>{esc(r["ledger"])}</td><td>{esc(r["name"])}</td><td>{money(r["amount"])}</td><td>{money(r["balance"])}</td></tr>' for r in result['rows'])
     return f'''<section id="planning"><h2>Personal reserve and cashflow</h2>
-    <p>Manual payments. Creditor messages draft-only. No dividend is assumed.</p>
+    <p>Manual payments. Creditor messages draft-only. Dividend support is shown separately as a conditional funding plan.</p>
     <form method="post" action="/dashboard/action">{token}<input type="hidden" name="action" value="plan-reserve">
     <label>Combined personal reserve (€)<input name="amount" value="{amount_input(result['reserve'])}" required></label><button>Save reserve</button></form>
+    {dividend_panel(result,esc,money)}
     <p>First projected reserve breach: {esc(result['first_breach'] or 'None in dated items')}.
     90-day funding gap in dated items: {money(result['funding_gap'])}. This is not an approved dividend or a monthly amount.</p>
     <p>Cloudstep lowest projected balance excluding estimated Airbnb: {money(result['minimum'].get('cloudstep'))}.
@@ -223,3 +228,56 @@ def panel(token):
     <p>Same-day debits are shown before credits until posting times are known. Balances are manually reconciled, not live bank feeds.</p>
     <details><summary>Forecast incomplete: missing inputs and existing arrangements</summary><ul>{issues}</ul></details>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Ledger</th><th>Item</th><th>Movement</th><th>Balance</th></tr></thead><tbody>{rows}</tbody></table></div></section>'''
+
+
+def dividend_scenario(result, start, balances_known=True, withholding_bps=1500):
+    """Conditional cash plan only. Reserve withholding immediately; never book receipt.
+
+    Company capacity is the minimum remaining cash through the full horizon.
+    Same-day receipts are unavailable until the following day, conservatively.
+    """
+    if not 0<=withholding_bps<10000:raise ValueError('Invalid withholding assumption')
+    rows=result['rows']; personal=result['opening'].get('personal',0)
+    company=result['opening'].get('cloudstep',0)
+    reserve=result['reserve']; transfers=[]; used_gross=0
+    low=personal; first_gap=start if personal<reserve else None
+    last=max([start]+[r['date'] for r in rows])
+    dates=[start+dt.timedelta(days=n) for n in range((last-start).days+1)]
+    for day in dates:
+        personal_rows=[r for r in rows if r['ledger']=='personal' and r['date']==day]
+        # Reserve just enough for this day's lowest point, never a blanket dividend.
+        trial=personal; need=max(0,reserve-trial)
+        for row in personal_rows:
+            trial+=row['amount'];need=max(need,reserve-trial)
+        before=company+sum(r['amount'] for r in rows if r['ledger']=='cloudstep' and r['date']<day)-used_gross
+        capacity=before; running=before
+        for row in rows:
+            if row['ledger']=='cloudstep' and row['date']>=day:
+                running+=row['amount'];capacity=min(capacity,running)
+        net=min(need,max(0,capacity)*(10000-withholding_bps)//10000) if balances_known else 0
+        if net:
+            gross=(net*10000+(10000-withholding_bps)-1)//(10000-withholding_bps)
+            transfers.append({'date':day,'net':net,'gross':gross,'withholding':gross-net})
+            used_gross+=gross;personal+=net
+        low=min(low,personal)
+        if personal<reserve and first_gap is None:first_gap=day
+        for row in personal_rows:
+            personal+=row['amount'];low=min(low,personal)
+            if personal<reserve and first_gap is None:first_gap=day
+    return {'transfers':transfers,'net':sum(t['net'] for t in transfers),'gross':used_gross,
+            'remaining_gap':max(0,reserve-low),'first_gap':first_gap,'balances_known':balances_known,
+            'withholding_bps':withholding_bps}
+
+
+def dividend_panel(result, esc, money):
+    d=result.get('dividend')
+    if d is None:return ''
+    items=''.join('<tr><td>'+str(t['date'])+'</td><td>'+money(t['net'])+'</td><td>'+money(t['withholding'])+'</td><td>'+money(t['gross'])+'</td></tr>' for t in d['transfers'])
+    return ('<section class="cc-surface" id="dividend"><h2>Cloudstep dividend funding plan</h2>'
+        '<p>Conditional forecast, not received cash or a payment instruction. Company commitments remain reserved through the full forecast. Same-day income becomes available the following day.</p>'
+        '<p>Personal gap before support: <strong>'+money(result['funding_gap'])+'</strong>. '
+        'Planned net support: <strong>'+money(d['net'])+'</strong>. '
+        'Remaining gap: <strong>'+money(d['remaining_gap'])+'</strong>.</p>'
+        +('<p>Enter all personal and Cloudstep balances to calculate support.</p>' if not d['balances_known'] else '')
+        +'<div class="table-wrap"><table><thead><tr><th>Planned date</th><th>Personal inflow</th><th>Withholding reserved</th><th>Cloudstep outflow</th></tr></thead><tbody>'+items+'</tbody></table></div>'
+        '<p>Uses a 15% withholding assumption. Distribution approval and any additional personal income tax remain to be confirmed. Unresolved company claims can reduce capacity. No transfer is marked paid or received.</p></section>')
