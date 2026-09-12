@@ -59,7 +59,7 @@ class CockpitTests(unittest.TestCase):
             m=cockpit.model(c,'personal')
             self.assertIsNone(m['available']);self.assertIsNone(m['allowance'])
         html=cockpit.page('test')
-        self.assertIn('Not yet calculated',html)
+        self.assertIn('Balance required',html)
         self.assertNotIn('DEMO-001',html)
 
     def test_signed_balance_validation(self):
@@ -68,8 +68,8 @@ class CockpitTests(unittest.TestCase):
             with self.assertRaises(ValueError):cockpit.euros(v)
 
     def test_company_view_and_invalid_ledger(self):
-        self.assertIn('Unallocated cash after commitments',cockpit.page('test',ledger='cloudstep'))
-        self.assertIn('Available for everyday spending',cockpit.page('test',ledger='<script>'))
+        self.assertIn('Provisional company cash capacity',cockpit.page('test',ledger='cloudstep'))
+        self.assertIn('Provisional spending capacity',cockpit.page('test',ledger='<script>'))
 
     def test_xss_escaped(self):
         self.assertIn('&lt;script&gt;',cockpit.page('test',notice='<script>'))
@@ -116,3 +116,22 @@ class CockpitTests(unittest.TestCase):
             with patch('planning.forecast',return_value=result):
                 m=cockpit.model(c,'personal')
             self.assertEqual(m['allowance'],25000)
+
+    def test_unresolved_cases_do_not_hide_calculated_capacity(self):
+        from planning import today
+        with db() as c:
+            cockpit.schema(c)
+            c.execute('INSERT INTO cockpit_budget VALUES(1,?,60000,150000)',(today().strftime('%Y-%m'),))
+            c.execute('UPDATE finance_accounts SET balance_cents=0')
+            c.execute("UPDATE finance_accounts SET balance_cents=95000 WHERE id='personal-rabobank'")
+            result={'issues':['Source reconciliation outstanding'],'minimum':{},'reserve':50000,'rows':[]}
+            with patch('planning.forecast',return_value=result):
+                m=cockpit.model(c,'personal')
+            self.assertEqual(m['allowance'],45000)
+            self.assertEqual(m['headroom'],45000)
+            self.assertTrue(m['provisional'])
+            result['rows']=[{'ledger':'personal','date':today(),'amount':-100000,'name':'Existing commitment','estimated':False}]
+            with patch('planning.forecast',return_value=result):
+                m=cockpit.model(c,'personal')
+            self.assertEqual(m['allowance'],0)
+            self.assertEqual(m['headroom'],-55000)

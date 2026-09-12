@@ -136,12 +136,15 @@ def model(c,ledger,start=None):
     adjusted=[r for r in rows if not (ledger=='personal' and r['name']=='Food and discretionary spending' and r['date'].strftime('%Y-%m')==start.strftime('%Y-%m'))]
     breach=shortfall(adjusted,available or 0,ledger,floor,start)
     if breach and available is not None:problems.insert(0,describe(breach,'Reserve breach'))
-    allowance=None if problems else max(0,min(budget,low-floor) if ledger=='personal' else low)
+    # Missing case details affect confidence, not whether known cashflow can be calculated.
+    headroom=None if available is None else low-floor
+    allowance=None if headroom is None or (ledger=='personal' and budget is None) else max(0,min(budget,headroom) if ledger=='personal' else headroom)
+    provisional=bool(problems)
     upcoming=[r for r in rows if r['ledger']==ledger and start<=r['date']<=start+dt.timedelta(days=7)]
     incomes=[r['date'] for r in rows if r['ledger']==ledger and r['amount']>0 and r['date']>start and not r['estimated']]
     until=min(incomes) if incomes else None
     return dict(result=result,accounts=accounts,own=own,available=available,problems=list(dict.fromkeys(problems)),
-                budget=budget,allowance=allowance,upcoming=upcoming,until=until,reconciliations=reconciliations,checks=checks,breach=breach)
+                budget=budget,allowance=allowance,upcoming=upcoming,until=until,reconciliations=reconciliations,checks=checks,breach=breach,headroom=headroom,provisional=provisional)
 
 
 def page(token,notice='',ledger='personal'):
@@ -182,8 +185,11 @@ def page(token,notice='',ledger='personal'):
         questions.append(f'<details class="cc-question"><summary>Explain balance movement: {money(r["difference_cents"])}</summary><p>Since {esc(r["recorded_at"][:10])}. Check the transactions first; a net change can contain both income and spending.</p><form method="post" action="/dashboard/action">{fields("cockpit-reconcile")}<input type="hidden" name="id" value="{r["id"]}"><select name="classification">{spending}<option value="known">Reconciled with known payments / income / transfers</option><option value="mixed">Mixed or still unknown: keep open</option></select><label>Reconciliation note<input name="note" maxlength="500"></label><button>Confirm classification</button></form></details>')
     nextrows=''.join(f'<div class="cc-next"><span>{r["date"].strftime("%d %b")}</span><div>{esc(r["name"])}<p>{money(r["amount"])} · {"estimated" if r["estimated"] else "recorded, not bank-confirmed"}</p></div></div>' for r in m['upcoming'])
     title='Available for everyday spending' if ledger=='personal' else 'Unallocated cash after commitments'
-    amount='Not yet calculated' if m['allowance'] is None else money(m['allowance'])
-    subtitle='Resolve the items below before relying on a spending allowance.' if m['problems'] else ('Until '+m['until'].strftime('%d %B') if m['until'] else 'No next income date confirmed')
+    if m['provisional']:title='Provisional spending capacity' if ledger=='personal' else 'Provisional company cash capacity'
+    amount='Balance required' if m['available'] is None else ('Living allowance required' if m['allowance'] is None else money(m['allowance']))
+    subtitle='Calculated from recorded commitments. Unresolved claims and funding assumptions may reduce this amount; it is not payment clearance.' if m['provisional'] else 'Calculated across the recorded 90-day forecast.'
+    margin='Unknown until balances are entered' if m['headroom'] is None else money(m['headroom'])
+    calculation=f'<p><strong>90-day headroom after reserve: {margin}</strong></p><p>A negative figure is a funding gap. Spending capacity is capped at zero when there is a gap. Current-month living allowance is capped separately; later months remain reserved.</p>'
     background=''.join('<details><summary>'+esc(k)+' ('+str(len(v))+')</summary><ul>'+''.join('<li>'+esc(x)+'</li>' for x in v)+'</ul></details>' for k,v in m['checks']['groups'].items())
     background+='<details><summary>Future assumptions</summary><ul>'+''.join('<li>'+esc(x)+'</li>' for x in m['checks']['warnings'])+'</ul></details>' if m['checks']['warnings'] else ''
     reasons=''.join('<li>'+esc(p)+'</li>' for p in m['problems'])
@@ -191,7 +197,7 @@ def page(token,notice='',ledger='personal'):
     banner=f'<p class="notice">{esc(notice)}</p>' if notice else ''
     return shell(f'''<div id="cockpit"><header><div><p class="eyebrow">POSTBODE</p><h2>Cashflow cockpit</h2></div><form method="get" action="/dashboard"><label>Account group<select name="ledger">{options}</select></label><button>Show</button></form><form method="post" action="/dashboard/logout">{fields('logout')}<button class="quiet">Sign out</button></form></header>
     <main>{banner}<div class="cc-row cc-intro"><div><h2>Your day, under control.</h2><p>{today().strftime('%A %d %B')} · manual payments</p></div></div>{forms}
-    <section class="cc-hero"><div><p class="eyebrow">{title}</p><h1>{amount}</h1><p>{subtitle}</p><details><summary>How this allowance works</summary><p>Remaining living budget: {money(m['budget']) if ledger=='personal' else 'Separate company ledger'}. Your allowance is capped by the recorded 90-day cashflow, not just today’s balance. Future income is not cash already received.</p><p>Manual balances and incomplete information cannot guarantee an actual minimum bank balance.</p></details></div><aside><p>Current available balance<strong>{money(m['available'])}</strong></p><p>{'Protected personal minimum' if ledger=='personal' else 'Company cash floor'}<strong>{money(m['result']['reserve'] if ledger=='personal' else 0)}</strong></p><p>{'Unused living allowance rolls forward' if ledger=='personal' else 'Not automatically available for dividends'}</p></aside></section>
+    <section class="cc-hero"><div><p class="eyebrow">{title}</p><h1>{amount}</h1><p>{subtitle}</p>{calculation}<details><summary>How this allowance works</summary><p>Remaining living budget: {money(m['budget']) if ledger=='personal' else 'Separate company ledger'}. Your allowance is capped by the recorded 90-day cashflow, not just today’s balance. Future income is not cash already received.</p><p>Manual balances and incomplete information cannot guarantee an actual minimum bank balance.</p></details></div><aside><p>Current available balance<strong>{money(m['available'])}</strong></p><p>{'Protected personal minimum' if ledger=='personal' else 'Company cash floor'}<strong>{money(m['result']['reserve'] if ledger=='personal' else 0)}</strong></p><p>{'Unused living allowance rolls forward' if ledger=='personal' else 'Not automatically available for dividends'}</p></aside></section>
     {cycle_html}<div class="cc-columns"><section class="cc-surface"><h2>Today’s actions</h2>{''.join(actions) or '<p>No dated case actions identified for today. This does not mean all obligations are resolved.</p>'}<details><summary>Other payments and receipts due today</summary>{''.join('<p>'+esc(r['name'])+' · '+money(r['amount'])+'</p>' for r in m['upcoming'] if r['date']==today()) or '<p>No additional dated items.</p>'}</details></section>
     <aside><section class="cc-surface"><h2>Next 7 days</h2>{nextrows or '<p>No dated movements recorded.</p>'}<a href="/dashboard/reference#planning">Full cashflow outlook</a></section><section class="cc-surface"><h2>Needs your clarification</h2>{''.join(questions[:3]) or '<p>No direct questions identified.</p>'}{'<details><summary>More clarification items</summary>'+''.join(questions[3:])+'</details>' if len(questions)>3 else ''}<details><summary>Forecast checks ({len(m['problems'])})</summary><ul>{reasons}</ul><a href="/dashboard/reference#recurring">Review bill dates and assumptions</a></details></section></aside></div>
     <div class="cc-reference"><details><summary>Case follow-up and future assumptions</summary>{background}</details><a href="/dashboard/reference">Reference: cases, agreements, payment history and settings →</a></div><p class="cc-foot">Messages remain drafts. Payments are manual. Reconcile balances after paying.</p></main></div><style>{CSS}</style>''','Cashflow cockpit')
