@@ -64,7 +64,7 @@ class PlanningTests(unittest.TestCase):
         with db() as c: planning.baseline(c,now())
         page=dashboard_page('test')
         self.assertIn('Personal reserve and cashflow',page)
-        self.assertIn('Dividend support is shown separately',page)
+        self.assertIn('Affordable Cloudstep support is included',page)
 
 
 if __name__=='__main__':unittest.main()

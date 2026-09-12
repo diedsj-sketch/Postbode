@@ -35,3 +35,14 @@ class DividendTests(unittest.TestCase):
     def test_no_gap_no_dividend(self):
         r,day=self.result();r['opening']['personal']=200000
         self.assertEqual(dividend_scenario(r,day)['transfers'],[])
+
+    def test_support_is_included_in_main_forecast(self):
+        from planning import include_dividend
+        r,day=self.result()
+        r['dividend']=dividend_scenario(r,day)
+        r=include_dividend(r,day)
+        self.assertEqual(r['funding_gap'],0)
+        self.assertEqual(r['closing']['personal'],50000)
+        self.assertEqual(r['closing']['cloudstep'],100000)
+        self.assertEqual(sum(x['amount'] for x in r['rows'] if x.get('assumed_funding')),-15000)
+        self.assertEqual(r['opening']['personal'],50000)

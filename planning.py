@@ -1,4 +1,4 @@
-"""Cash planning only. No bank transfers, creditor sends or assumed dividends."""
+"""Cash planning only. No bank transfers or creditor sends. Affordable dividend support is forecast automatically."""
 import calendar
 import datetime as dt
 import json
@@ -182,7 +182,7 @@ def forecast(c, start=None, days=90, include_estimates=False):
     relevant=[a for a in accounts if a['ledger_id'] in ('personal','cloudstep')]
     known=all(a['balance_cents'] is not None for a in relevant) and {a['ledger_id'] for a in relevant}=={'personal','cloudstep'}
     result['dividend']=dividend_scenario(result,start,known)
-    return result
+    return include_dividend(result,start)
 
 
 def action(c, form, stamp):
@@ -217,10 +217,10 @@ def panel(token):
     issues=''.join(f'<li>{esc(i)}</li>' for i in result['issues'])
     rows=''.join(f'<tr><td>{r["date"]}</td><td>{esc(r["ledger"])}</td><td>{esc(r["name"])}</td><td>{money(r["amount"])}</td><td>{money(r["balance"])}</td></tr>' for r in result['rows'])
     return f'''<section id="planning"><h2>Personal reserve and cashflow</h2>
-    <p>Manual payments. Creditor messages draft-only. Dividend support is shown separately as a conditional funding plan.</p>
+    <p>Manual payments. Creditor messages draft-only. Affordable Cloudstep support is included in the forecast.</p>
     <form method="post" action="/dashboard/action">{token}<input type="hidden" name="action" value="plan-reserve">
     <label>Combined personal reserve (€)<input name="amount" value="{amount_input(result['reserve'])}" required></label><button>Save reserve</button></form>
-    {dividend_panel(result,esc,money)}
+    <p>Affordable Cloudstep support is included in this forecast.</p>
     <p>First projected reserve breach: {esc(result['first_breach'] or 'None in dated items')}.
     90-day funding gap in dated items: {money(result['funding_gap'])}. This is not an approved dividend or a monthly amount.</p>
     <p>Cloudstep lowest projected balance excluding estimated Airbnb: {money(result['minimum'].get('cloudstep'))}.
@@ -269,15 +269,23 @@ def dividend_scenario(result, start, balances_known=True, withholding_bps=1500):
             'withholding_bps':withholding_bps}
 
 
-def dividend_panel(result, esc, money):
-    d=result.get('dividend')
-    if d is None:return ''
-    items=''.join('<tr><td>'+str(t['date'])+'</td><td>'+money(t['net'])+'</td><td>'+money(t['withholding'])+'</td><td>'+money(t['gross'])+'</td></tr>' for t in d['transfers'])
-    return ('<section class="cc-surface" id="dividend"><h2>Cloudstep dividend funding plan</h2>'
-        '<p>Conditional forecast, not received cash or a payment instruction. Company commitments remain reserved through the full forecast. Same-day income becomes available the following day.</p>'
-        '<p>Personal gap before support: <strong>'+money(result['funding_gap'])+'</strong>. '
-        'Planned net support: <strong>'+money(d['net'])+'</strong>. '
-        'Remaining gap: <strong>'+money(d['remaining_gap'])+'</strong>.</p>'
-        +('<p>Enter all personal and Cloudstep balances to calculate support.</p>' if not d['balances_known'] else '')
-        +'<div class="table-wrap"><table><thead><tr><th>Planned date</th><th>Personal inflow</th><th>Withholding reserved</th><th>Cloudstep outflow</th></tr></thead><tbody>'+items+'</tbody></table></div>'
-        '<p>Uses a 15% withholding assumption. Distribution approval and any additional personal income tax remain to be confirmed. Unresolved company claims can reduce capacity. No transfer is marked paid or received.</p></section>')
+
+def include_dividend(result,start):
+    """Apply paired forecast entries, never mutate the bank ledger."""
+    additions=[]
+    for t in result['dividend']['transfers']:
+        additions.extend([
+            {'date':t['date'],'ledger':'cloudstep','amount':-t['gross'],'name':'Assumed Cloudstep funding (including withholding)','estimated':True,'assumed_funding':True},
+            {'date':t['date'],'ledger':'personal','amount':t['net'],'name':'Assumed Cloudstep funding','estimated':True,'assumed_funding':True}])
+    # Funding uses cash available before this day, so place it before that day's bills.
+    rows=sorted(result['rows']+additions,key=lambda r:(r['date'],0 if r.get('assumed_funding') else 1,r['amount']))
+    balances=dict(result['opening']);minimum=dict(balances)
+    breach=start if balances.get('personal',0)<result['reserve'] else None
+    for r in rows:
+        balances[r['ledger']]=balances.get(r['ledger'],0)+r['amount']
+        r['balance']=balances[r['ledger']]
+        minimum[r['ledger']]=min(minimum.get(r['ledger'],0),r['balance'])
+        if r['ledger']=='personal' and r['balance']<result['reserve'] and breach is None:breach=r['date']
+    result.update(rows=rows,closing=balances,minimum=minimum,personal_minimum=minimum.get('personal',0),
+                  first_breach=breach,funding_gap=max(0,result['reserve']-minimum.get('personal',0)))
+    return result
