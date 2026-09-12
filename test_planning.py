@@ -67,4 +67,19 @@ class PlanningTests(unittest.TestCase):
         self.assertIn('Affordable Cloudstep support is included',page)
 
 
-if __name__=='__main__':unittest.main()
+
+    def test_saved_income_and_named_salary_override_seed(self):
+        with db() as c:
+            planning.baseline(c,now())
+            c.execute("UPDATE finance_recurring SET amount_cents=1000000,next_date='2026-09-21' WHERE id='cloudstep-openprovider'")
+            c.execute("UPDATE finance_recurring SET amount_cents=150000,next_date='2026-09-27' WHERE id='cloudstep-airbnb'")
+            c.execute("INSERT INTO finance_recurring VALUES('named-salary','cloudstep','salary Diederik','expense',350000,'monthly','2026-09-23',1)")
+            c.execute("INSERT INTO finance_recurring VALUES('denise-salary','cloudstep','salary denise','expense',175000,'monthly','2026-09-22',1)")
+            result=planning.forecast(c,start=dt.date(2026,9,12),days=18)
+            incoming=[r for r in result['rows'] if r['ledger']=='cloudstep' and r['amount']>0]
+            self.assertEqual([(r['date'].day,r['amount']) for r in incoming],[(21,1000000),(27,150000)])
+            salary=[r for r in result['rows'] if r['ledger']=='cloudstep' and r['amount']==-350000]
+            self.assertEqual(len(salary),1)
+            self.assertEqual(salary[0]['name'],'salary Diederik')
+            employee=[r for r in result['rows'] if r['ledger']=='cloudstep' and r['name'] in ('Employee salary','salary denise')]
+            self.assertEqual([(r['name'],r['amount'],r['date'].day) for r in employee],[('salary denise',-175000,22)])

@@ -86,7 +86,25 @@ def forecast(c, start=None, days=90, include_estimates=False):
             issues.append(f"Balance needs reconciliation: {a['name']} ({a['ledger_id']}), as of {a['updated_at'][:10]}")
     events=[]
     rules=list(c.execute('SELECT * FROM finance_plan_rules WHERE active=1'))
-    replaced={r['id'] for r in rules}|({'cloudstep-airbnb'} if rules else set())
+    recurring=list(c.execute('SELECT * FROM finance_recurring'))
+    # Completed saved schedules supersede seed assumptions, rather than being hidden.
+    completed={r['id'] for r in recurring if r['amount_cents'] is not None and r['next_date']}
+    superseded=set(completed)
+    if 'cloudstep-airbnb' in completed:
+        superseded.update(r['id'] for r in rules if r['id'].startswith('cloudstep-airbnb-'))
+    # The named Diederik salary is the same outgoing transfer as the seed rule.
+    # Denise is confirmed as the employee represented by the seed allowance.
+    from cases import norm
+    if any(r['active'] and r['ledger_id']=='cloudstep' and r['direction']=='expense'
+           and norm(r['name']) in ('salarydiederik','diederiksalary')
+           and r['id'] in completed for r in recurring):
+        superseded.add('cloudstep-salary')
+    if any(r['active'] and r['ledger_id']=='cloudstep' and r['direction']=='expense'
+           and norm(r['name']) in ('salarydenise','denisesalary')
+           and r['id'] in completed for r in recurring):
+        superseded.add('cloudstep-employee')
+    rules=[r for r in rules if r['id'] not in superseded]
+    replaced={r['id'] for r in rules}|({'cloudstep-airbnb'} if rules and 'cloudstep-airbnb' not in completed else set())
     for r in rules:
         if r['day'] is None:
             issues.append(f"Payment timing unknown: {r['name']} ({r['ledger_id']})")
